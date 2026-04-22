@@ -14,23 +14,45 @@ export default function App() {
   
   const videoRef = useRef<HTMLIFrameElement>(null);
 
+  // Sort videos: unavailable first, then available at the bottom
+  const sortedVideos = useMemo(() => {
+    return [...videos].sort((a, b) => {
+      if (a.status === 'unavailable' && b.status !== 'unavailable') return -1;
+      if (a.status !== 'unavailable' && b.status === 'unavailable') return 1;
+      return 0;
+    });
+  }, [videos]);
+
   const selectedVideo = useMemo(() => 
     videos.find(v => v.id === selectedVideoId) || videos[0],
   [selectedVideoId, videos]);
 
+  // Search logic: Optimizing with early exit and case-insensitive check
   const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const query = searchQuery.toLowerCase();
+    const trimmedQuery = searchQuery.trim().toLowerCase();
+    if (!trimmedQuery) return [];
     
-    return videos.map(video => {
-      const transcriptMatches = video.transcripts.filter(t => t.text.toLowerCase().includes(query));
-      const commentMatches = video.comments.filter(c => c.text.toLowerCase().includes(query));
+    const results = [];
+    for (const video of videos) {
+      const transcriptMatches = video.transcripts.filter(t => 
+        t.text.toLowerCase().includes(trimmedQuery)
+      );
+      const commentMatches = video.comments.filter(c => 
+        c.text.toLowerCase().includes(trimmedQuery)
+      );
+      const titleMatch = video.title.toLowerCase().includes(trimmedQuery);
       
-      if (transcriptMatches.length > 0 || commentMatches.length > 0 || video.title.toLowerCase().includes(query)) {
-        return { video, transcriptMatches, commentMatches };
+      if (transcriptMatches.length > 0 || commentMatches.length > 0 || titleMatch) {
+        results.push({ 
+          video, 
+          transcriptMatches, 
+          commentMatches,
+          score: (titleMatch ? 10 : 0) + transcriptMatches.length + commentMatches.length
+        });
       }
-      return null;
-    }).filter(Boolean);
+    }
+    // Sort by relevance (score)
+    return results.sort((a, b) => b.score - a.score);
   }, [searchQuery, videos]);
 
   const seekTo = (seconds: number) => {
@@ -76,7 +98,7 @@ export default function App() {
         id: Math.random().toString(36).substr(2, 9),
         title: `Video Import: ${vid}`,
         videoId: vid,
-        thumbnail: `https://img.youtube.com/vi/${vid}/maxresdefault.jpg`,
+        thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
         review: "Review pending analysis...",
         status: 'available',
         transcripts: [
@@ -175,46 +197,64 @@ export default function App() {
             Active Projects
           </div>
           <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
-            {videos.map((video) => (
-              <button
-                key={video.id}
-                onClick={() => setSelectedVideoId(video.id)}
-                className={`w-full p-2 rounded flex gap-3 cursor-pointer transition-all border text-left group relative ${
-                  selectedVideoId === video.id 
-                  ? 'bg-slate-800 border-slate-700 shadow-lg' 
-                  : 'border-transparent hover:bg-slate-800/40'
-                }`}
-              >
-                <div className="w-20 h-12 bg-slate-700 flex-shrink-0 relative rounded-sm overflow-hidden border border-slate-600">
-                  <img 
-                    src={video.thumbnail} 
-                    alt={video.title} 
-                    className={`w-full h-full object-cover transition-opacity ${video.status === 'unavailable' ? 'opacity-30 grayscale' : 'opacity-60 group-hover:opacity-100'}`} 
-                  />
-                  {video.status === 'unavailable' && (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <AlertTriangle className="w-4 h-4 text-rose-500 drop-shadow-md" />
+            {sortedVideos.map((video) => {
+              const isCollapsed = video.status === 'available';
+              return (
+                <button
+                  key={video.id}
+                  onClick={() => setSelectedVideoId(video.id)}
+                  className={`w-full p-2 rounded flex gap-3 cursor-pointer transition-all border text-left group relative ${
+                    selectedVideoId === video.id 
+                    ? 'bg-slate-800 border-slate-700 shadow-lg' 
+                    : 'border-transparent hover:bg-slate-800/40'
+                  } ${isCollapsed ? 'items-center py-1.5' : 'items-start'}`}
+                >
+                  {!isCollapsed ? (
+                    <div className="w-24 h-14 bg-slate-700 flex-shrink-0 relative rounded-sm overflow-hidden border border-slate-600 shadow-inner">
+                      <img 
+                        src={video.thumbnail} 
+                        alt={video.title} 
+                        style={{ imageRendering: 'high-quality' }}
+                        className={`w-full h-full object-cover transition-opacity duration-300 ${
+                          video.status === 'unavailable' 
+                          ? 'opacity-20 grayscale' 
+                          : selectedVideoId === video.id ? 'opacity-100' : 'opacity-70 group-hover:opacity-100'
+                        }`} 
+                      />
+                      {video.status === 'unavailable' && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <AlertTriangle className="w-4 h-4 text-rose-500 drop-shadow-md" />
+                        </div>
+                      )}
+                      <div className="absolute bottom-0 right-0 px-1 bg-black/60 text-[7px] font-mono">04:22</div>
+                    </div>
+                  ) : (
+                    <div className="w-6 h-6 bg-slate-800/80 rounded border border-slate-700/50 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/10 group-hover:border-emerald-500/20 transition-all">
+                      <Play className={`w-2.5 h-2.5 transition-colors ${selectedVideoId === video.id ? 'text-emerald-400 fill-emerald-400' : 'text-slate-600 group-hover:text-emerald-400'}`} />
                     </div>
                   )}
-                  <div className="absolute bottom-0 right-0 px-1 bg-black/60 text-[7px] font-mono">04:22</div>
-                </div>
-                <div className="flex flex-col min-w-0 justify-center">
-                  <div className={`text-[11px] font-semibold truncate ${selectedVideoId === video.id ? 'text-white' : 'text-slate-400'}`}>
-                    {video.title}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    {video.status === 'unavailable' ? (
-                      <span className="text-[8px] font-bold text-rose-500 uppercase tracking-tighter">DATA MISSING</span>
-                    ) : (
-                      <span className="text-[9px] text-slate-500 font-mono tracking-tighter">ID: {video.videoId.substr(0, 6)}...</span>
+                  
+                  <div className="flex flex-col min-w-0 justify-center flex-1">
+                    <div className={`text-[11px] font-semibold truncate ${selectedVideoId === video.id ? 'text-white' : 'text-slate-400'}`}>
+                      {video.title}
+                    </div>
+                    {!isCollapsed && (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {video.status === 'unavailable' ? (
+                          <span className="text-[8px] font-bold text-rose-500 uppercase tracking-tighter">DATA MISSING</span>
+                        ) : (
+                          <span className="text-[9px] text-slate-500 font-mono tracking-tighter">ID: {video.videoId.substr(0, 6)}...</span>
+                        )}
+                      </div>
                     )}
                   </div>
-                </div>
-                {video.status === 'unavailable' && (
-                  <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" />
-                )}
-              </button>
-            ))}
+                  
+                  {!isCollapsed && video.status === 'unavailable' && (
+                    <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </aside>
 
