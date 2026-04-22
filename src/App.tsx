@@ -81,8 +81,20 @@ export default function App() {
         if (data.event === 'onReady') {
           setIsPlayerReady(true);
         }
-        if (data.event === 'infoDelivery' && data.info?.currentTime !== undefined) {
-          setCurrentTime(data.info.currentTime);
+        if (data.event === 'infoDelivery' && data.info) {
+          if (data.info.currentTime !== undefined) {
+            setCurrentTime(data.info.currentTime);
+          }
+          /**
+           * DURATION SYNC:
+           * If the YouTube API provides a duration, we update our local state.
+           * This resolves issues where imported videos default to 5:00 but are actually longer or shorter.
+           */
+          if (data.info.duration !== undefined && data.info.duration > 0) {
+            setVideos(prev => prev.map(v => 
+              v.videoId === selectedVideo.videoId ? { ...v, duration: data.info.duration } : v
+            ));
+          }
         }
       } catch (e) {
         // Silently fail for non-API messages

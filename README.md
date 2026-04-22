@@ -102,6 +102,36 @@ docker run -p 3000:3000 video-insight-search
 
 ---
 
+## 🔬 Architectural Influences & Competitive Analysis
+
+This suite was informed by industry-leading open-source repos and analysis platforms:
+
+1.  **[CVAT (Computer Vision Annotation Tool)](https://github.com/cvat-ai/cvat)**:
+    *   *System Influence*: Structured "Jobs" and "Task" management.
+    *   *Recommended Feature*: **Spatial Annotation Overlays**. Implementing a canvas layer over the IFrame to allow analysts to "circle" UI bugs directly on the video frame.
+2.  **[Label Studio](https://github.com/HumanSignal/label-studio)**:
+    *   *System Influence*: Multi-modal data support.
+    *   *Recommended Feature*: **Configurable Labeling Interface**. Allowing users to define custom "tags" (e.g., [CRITICAL_BUG], [UX_DELIGHT]) that appear as color-coded heatmaps on the scrubber.
+3.  **[Remotion](https://github.com/remotion-dev/remotion)**:
+    *   *System Influence*: React-based timeline composition.
+    *   *Recommended Feature*: **Visual Overlays on Export**. When exporting a clip via the EDL Pipeline, automatically burn-in the project name and timestamp for stakeholder clarity.
+
+---
+
+## 🗺 Feature Roadmap (High-ROI Enhancements)
+
+Based on a review of top-performing video repositories, these features are prioritized for v3.0:
+
+*   **⌨️ Power-User Hotkeys**: 
+    - `I` / `O`: Set In/Out points.
+    - `SPACE`: Play/Pause toggle.
+    - `J` / `L`: Frame-accurate step backward/forward (100ms precision).
+*   **🤖 AI Auto-Chaptering**: Leverage the `@google/genai` SDK to automatically segment tracks based on visual scene changes (e.g., "Login Screen" -> "Dashboard" -> "Checkout").
+*   **👯 Synchronized A/B Comparison**: A dual-player view for comparing "Before" and "After" versions of a feature rollout, with perfectly locked playheads.
+*   **🔗 Deep-Link Export**: Direct `&t=` URL generation that opens the app specifically to the active EDL selection segment.
+
+---
+
 ## 🏗 Key Architectural Pillars (Verbatim References)
 
 > **High-Resolution Thumbnails**
