@@ -1,99 +1,97 @@
-# Video Insight Search
+# Video Insight Search (v2.4)
 
-A professional-grade Video Discover & Discovery Discovery (VID) dashboard built for identifying friction points in user feedback, technical logs, and artistic showcases.
+A professional-grade, high-density dashboard built for identifying friction points in user feedback, technical logs, and strategic visual showcases.
+
+---
+
+## 🕰 How We Got Here (The Evolution)
+
+The project began as a concept for a **"Vite video slider selector"** tasked with reviewing transcripts and YouTube timelines. Through iterative development, it transformed into a mission-critical tool for data analysis.
+
+1.  **Phase 1: The Foundation**
+    *   *Requirement*: "make a vite video slider selector that lists and displays thumbnails and reviews... using transcripts and youtube timeline marks"
+    *   *Action*: Established the core React 19 architecture and integrated the YouTube IFrame API for programmatic control.
+2.  **Phase 2: The "High Density" Overhaul**
+    *   *Requirement*: "Apply the 'High Density' design theme to the app."
+    *   *Action*: Migrated from a generic UI to a **Slate-950 and Emerald-500** professional palette. Implemented tight typographic scales (`text-[9px]`) and a three-column layout to maximize information throughput.
+3.  **Phase 3: The Error-Aware Pipeline**
+    *   *Requirement*: "active projects list should flag unavailable videos"
+    *   *Action*: Introduced the **Unavailable Video Intelligence** system, using rose-colored status indicators and `AlertTriangle` overlays to warn users of broken source data.
+4.  **Phase 4: Full-Stack Transition**
+    *   *Requirement*: "use youtube-dl and ffmpeg to download and convert... use docker to manage dependencies"
+    *   *Action*: Moved from a client-only demo to a **Full-Stack Express + Vite** infrastructure, dockerized with Ubuntu 22.04 base to support the heavy media processing binaries needed for scale.
+
+---
+
+## 📍 Where We Are (Current Status)
+
+Today, **Video Insight Search** is a comprehensive **Video Discovery (VID)** suite. 
+
+*   **Intelligent Prioritization**: The system automatically pulls "Problem Projects" (Unavailable videos) to the top of the feed while collapsing healthy videos into a minimal mini-player view.
+*   **High-Fidelity Visuals**: Every thumbnail uses `image-rendering: high-quality` and `hqdefault` sources to prevent the "blocky" artifacts common in automated extraction.
+*   **Deep Discovery**: A relevance-weighted search engine that indexes timestamps across transcripts and community comments simultaneously.
+
+---
+
+## ⚙️ How It All Works (The Mechanics)
+
+### 1. The Search Engine (Weighted Efficacy)
+The app uses a single-pass `for...of` loop optimized with `useMemo`. We measure **Search Score** to prioritize results:
+```typescript
+score: (titleMatch ? 10 : 0) + transcriptMatches.length + commentMatches.length
+```
+This ensures a project name match always outranks a mention in the 40th minute of a transcript.
+
+### 2. The YouTube Bridge (Precise Scrubbing)
+Communication with the video player happens via an asynchronous message bridge. When a user clicks a transcript segment, we dispatch a command to the iframe:
+```javascript
+videoRef.current.contentWindow.postMessage(
+  JSON.stringify({ event: 'command', func: 'seekTo', args: [seconds, true] }), 
+  '*'
+)
+```
+
+### 3. The Backend Processing Pipeline
+When a new link is added via the **"Add Videos"** UI, the frontend initiates an API call to the Express server:
+*   **Endpoint**: `/api/process-video`
+*   **Binary Trigger**: The server (inside Docker) is pre-configured with `yt-dlp` and `ffmpeg`.
+*   **Workflow**: The server probes the URL -> extracts metadata -> simulates the transcription job -> returns a ready-to-index status.
+
+---
 
 ## 🚀 Quick Start
 
 ### Installation
-1. **Clone the repository**:
+1. **Clone & Install**:
    ```bash
    git clone <repository-url>
-   cd video-insight-search
-   ```
-
-2. **Install dependencies**:
-   ```bash
    npm install
    ```
-
-3. **Launch development environment**:
+2. **Launch development environment**:
    ```bash
    npm run dev
    ```
-   > **Note**: The application is configured to run on port `3000`. Every time you run this command, the system executes a `predev` script to check for remote updates:
-   > `git fetch --quiet && [ "$(git rev-parse HEAD)" != "$(git rev-parse @{u})" ] && echo '⚠️ Update available...'`
+   > **Note**: The system executes a `predev` script to check for remote updates: `git fetch --quiet && [ "$(git rev-parse HEAD)" != "$(git rev-parse @{u})" ]`.
 
 ---
 
-## 📖 User Guide
-
-### 1. The Video Experience
-Select a project from the **Active Projects** sidebar. Note the visual status indicators:
-- **Available**: Full high-resolution playback and transcript sync.
-- **Unavailable**: Flagged with a rose-colored alert. The system provides a bypass link to YouTube.
-
-### 2. Timeline Intelligence
-The lower workspace features "Multi-track Scrubber Interface" allowing you to visualize:
-- **Sentiment**: Peaks and valleys of user emotion.
-- **Keywords**: Heatmaps of recurring transcript terms.
-- **Scrubbing**: Click any track to jump the playhead.
-
-### 3. Deep Discovery (Search)
-Use the top-bar search to query **transcripts** and the **comment database** simultaneously. Results are clickable and will transport you to the exact timestamp in the selected video.
-
----
-
-## 🏗 How It Was Built
-
-This application was developed using a "High Density" design philosophy, prioritizing data density and professional aesthetics.
-
-### Key Architectural Pillars:
-
-> **High-Resolution Thumbnails Architecture**
-> "thumbnail of selected video is blocky, use higher resolution"
-> *Implementation Note*: The system was upgraded to use `maxresdefault.jpg` from YouTube's CDN and `w=1200` width Unsplash assets for internal projects.
-
-> **The "Active Projects" Library**
-> "'active projects' list should flag unavailable videos"
-> *Design Response*: Implemented a `VideoStatus` type (`'available' | 'unavailable' | 'checking'`) and added rose-colored `AlertTriangle` icons in the sidebar to visualize source-missing segments.
-
-> **Transcript Intelligence (Scrubbing)**
-> "let users scrub through the video based on those transcript segments."
-> *Implementation Response*: Each segment in `src/data.ts` contains `start` and `duration` metadata. The `App` component uses a `seekTo` helper that post-messages the YouTube IFrame API:
-> `videoRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [seconds, true] }), '*')`
-
-### Styling Framework
-The app utilizes **Tailwind CSS v4** with a custom theme:
-- **Background**: `slate-950`
-- **Accents**: `emerald-500` (vid-stable) and `rose-500` (vid-error).
-- **Typography**: Inter (UI) and JetBrains Mono (Data).
-
----
-
-## 🔬 Competitive Analysis & Future Features
-
-Popular open-source repositories that approximate this functionality include:
-
-1.  **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**: The industry standard for downloading. Implementation uses this backbone for media extraction.
-2.  **[OpenAI Whisper](https://github.com/openai/whisper)**: State-of-the-art transcription. 
-    *   *Recommended Feature*: Integrate Whisper nodes to provide 99% accuracy auto-generated transcripts instead of relying on YouTube's API.
-3.  **[Video-Indexer](https://github.com/Azure/azure-video-indexer)**: Deep ML suite.
-    *   *Recommended Feature*: **Multi-speaker Diarization**. Identifying *who* is speaking when is critical for professional analysis.
-    *   *Recommended Feature*: **Semantic Search**. Moving from string matching to vector-based embeddings (e.g., using Pinecone or Milvus) would allow users to search for "User frustration" even if the word "frustration" isn't in the text.
-
----
-
-## 🐳 Docker Management
-
-Dependency management is handled via Docker to ensure `ffmpeg` and `python` environments are consistent across nodes.
-
-### Build & Run
+## 🐳 Docker Architecture
+Dependency management is handled via Docker to ensure `ffmpeg` and `python` environments are consistent.
 ```bash
 docker build -t video-insight-search .
 docker run -p 3000:3000 video-insight-search
 ```
+**Image Contents**: Ubuntu 22.04 + Node.js 20 + Python 3 (youtube-dl) + FFmpeg.
 
-### Included in Image:
-- **Python 3 / youtube-dl**: For high-bandwidth media extraction.
-- **FFmpeg**: For audio-to-text preprocessing and stream conversion.
-- **Node.js 20**: Standard high-performance runtime.
+---
+
+## 🏗 Key Architectural Pillars (Verbatim References)
+
+> **High-Resolution Thumbnails**
+> "thumbnail of selected video is blocky, use higher resolution" -> *Applied `image-rendering: high-quality` CSS and `hqdefault` YouTube sources.*
+
+> **Transcript Intelligence**
+> "let users scrub through the video based on those transcript segments." -> *Mapped segments in `src/data.ts` to atomic `start` integers for 1:1 playhead sync.*
+
+> **Status Flagging**
+> "'active projects' list should flag unavailable videos" -> *Implemented `VideoStatus` type with rose-500 pulse indicators.*
