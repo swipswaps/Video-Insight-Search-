@@ -19,6 +19,8 @@ export default function App() {
   // Editor / EDL Mode State
   const [isEditorMode, setIsEditorMode] = useState(false);
   const [showIntelligence, setShowIntelligence] = useState(true);
+  const [showTimestamp, setShowTimestamp] = useState(true);
+  const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState(true);
   const [inPoint, setInPoint] = useState<number | null>(null);
   const [outPoint, setOutPoint] = useState<number | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -90,7 +92,7 @@ export default function App() {
            * If the YouTube API provides a duration, we update our local state.
            * This resolves issues where imported videos default to 5:00 but are actually longer or shorter.
            */
-          if (data.info.duration !== undefined && data.info.duration > 0) {
+          if (isAutoSyncEnabled && data.info.duration !== undefined && data.info.duration > 0) {
             setVideos(prev => prev.map(v => 
               v.videoId === selectedVideo.videoId ? { ...v, duration: data.info.duration } : v
             ));
@@ -254,6 +256,26 @@ export default function App() {
               className={`w-8 h-4 rounded-full relative transition-colors ${showIntelligence ? 'bg-sky-500' : 'bg-slate-700'}`}
             >
               <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${showIntelligence ? 'left-4.5' : 'left-0.5'}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-700">
+            <span className="text-[9px] uppercase font-bold text-slate-400">Timestamps</span>
+            <button 
+              onClick={() => setShowTimestamp(!showTimestamp)}
+              className={`w-8 h-4 rounded-full relative transition-colors ${showTimestamp ? 'bg-emerald-500' : 'bg-slate-700'}`}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${showTimestamp ? 'left-4.5' : 'left-0.5'}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-700">
+            <span className="text-[9px] uppercase font-bold text-slate-400">Auto Sync</span>
+            <button 
+              onClick={() => setIsAutoSyncEnabled(!isAutoSyncEnabled)}
+              className={`w-8 h-4 rounded-full relative transition-colors ${isAutoSyncEnabled ? 'bg-emerald-500' : 'bg-slate-700'}`}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAutoSyncEnabled ? 'left-4.5' : 'left-0.5'}`} />
             </button>
           </div>
 
@@ -425,9 +447,11 @@ export default function App() {
                   </a>
                 </div>
               )}
-              <div className="h-10 bg-gradient-to-t from-black/80 to-transparent p-4 flex items-center gap-4 pointer-events-none absolute bottom-0 w-full">
-                <div className="text-[10px] font-mono text-emerald-400">{formatTime(currentTime)} / {formatTime(selectedVideo.duration)}</div>
-              </div>
+              {showTimestamp && (
+                <div className="h-10 bg-gradient-to-t from-black/80 to-transparent p-4 flex items-center gap-4 pointer-events-none absolute bottom-0 w-full">
+                  <div className="text-[10px] font-mono text-emerald-400">{formatTime(currentTime)} / {formatTime(selectedVideo.duration)}</div>
+                </div>
+              )}
             </div>
 
             {/* Analyst Review Floating Card */}
