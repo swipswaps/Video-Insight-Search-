@@ -68,6 +68,10 @@ export default function App() {
     return results.sort((a, b) => b.score - a.score);
   }, [searchQuery, videos]);
 
+  useEffect(() => {
+    setIsPlayerReady(false);
+  }, [selectedVideoId]);
+
   /**
    * Playhead Synchronization Logic
    * Listens to the YouTube IFrame API events to sync local state with actual video progress.
@@ -118,7 +122,7 @@ export default function App() {
       window.removeEventListener('message', handleMessage);
       clearInterval(interval);
     };
-  }, []);
+  }, [selectedVideo.videoId, isAutoSyncEnabled]);
 
   const seekTo = (seconds: number) => {
     setCurrentTime(seconds);
@@ -147,9 +151,13 @@ export default function App() {
    */
   const handleAddLinks = async () => {
     const urls = linksText.split(/[\s,]+/).filter(u => u.trim());
+    const processedVideos: VideoData[] = [];
     
-    // Call backend for each link to simulate processing
+    // Call backend for each link to simulate processing and fetch metadata
     for (const url of urls) {
+      const vid = extractVideoId(url);
+      if (!vid) continue;
+
       try {
         const response = await fetch('/api/process-video', {
           method: 'POST',
@@ -157,34 +165,45 @@ export default function App() {
           body: JSON.stringify({ url })
         });
         const result = await response.json();
-        console.log('Backend processing result:', result);
+        
+        /**
+         * PROACTIVE METADATA LOAD:
+         * We use the duration and title returned from the backend immediately.
+         * This prevents the "ANALYZING..." state until the IFrame API warms up.
+         */
+        processedVideos.push({
+          id: Math.random().toString(36).substr(2, 9),
+          title: result.mockData?.title || `Video Import: ${vid}`,
+          videoId: vid,
+          thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+          review: "Review pending analysis...",
+          duration: result.mockData?.duration || 0,
+          status: 'available',
+          transcripts: [
+            { start: 0, duration: 60, text: "Transcript processing initiated. Audio data being prioritized for extraction." }
+          ],
+          comments: []
+        });
       } catch (err) {
         console.error('Failed to contact processing pipeline:', err);
+        processedVideos.push({
+          id: Math.random().toString(36).substr(2, 9),
+          title: `Video Import: ${vid}`,
+          videoId: vid,
+          thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+          review: "Backend sync failed. Local entry created.",
+          duration: 0,
+          status: 'available',
+          transcripts: [],
+          comments: []
+        });
       }
     }
 
-    const newVideos: VideoData[] = urls.map(url => {
-      const vid = extractVideoId(url);
-      if (!vid) return null;
-      
-      return {
-        id: Math.random().toString(36).substr(2, 9),
-        title: `Video Import: ${vid}`,
-        videoId: vid,
-        thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-        review: "Review pending analysis...",
-        duration: 300, // Default to 5 mins for imported videos
-        status: 'available',
-        transcripts: [
-          { start: 0, duration: 60, text: "Transcript processing initiated. Audio data being prioritized for extraction." }
-        ],
-        comments: []
-      };
-    }).filter((v): v is VideoData => v !== null);
-
-    if (newVideos.length > 0) {
-      setVideos([...newVideos, ...videos]);
-      setSelectedVideoId(newVideos[0].id);
+    if (processedVideos.length > 0) {
+      // Prioritize new videos at the top
+      setVideos([...processedVideos, ...videos]);
+      setSelectedVideoId(processedVideos[0].id);
       setLinksText('');
       setIsAddPanelOpen(false);
     }
@@ -448,8 +467,10 @@ export default function App() {
                 </div>
               )}
               {showTimestamp && (
-                <div className="h-10 bg-gradient-to-t from-black/80 to-transparent p-4 flex items-center gap-4 pointer-events-none absolute bottom-0 w-full">
-                  <div className="text-[10px] font-mono text-emerald-400">{formatTime(currentTime)} / {formatTime(selectedVideo.duration)}</div>
+                <div className="h-10 bg-gradient-to-t from-black/80 to-transparent p-4 flex items-center gap-4 pointer-events-none absolute bottom-0 w-full transition-opacity">
+                  <div className="text-[10px] font-mono text-emerald-400">
+                    {formatTime(currentTime)} / {selectedVideo.duration > 0 ? formatTime(selectedVideo.duration) : "ANALYZING..."}
+                  </div>
                 </div>
               )}
             </div>

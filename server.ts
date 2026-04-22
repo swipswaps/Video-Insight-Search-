@@ -69,7 +69,8 @@ async function startServer() {
         message: "Source ingested successfully. Background extraction triggered.",
         mockData: {
           title: "Stream Pipeline: " + videoId,
-          status: "available"
+          status: "available",
+          duration: 1200 + Math.floor(Math.random() * 2400) // 20 to 60 minutes
         }
       });
     }, 2000);
