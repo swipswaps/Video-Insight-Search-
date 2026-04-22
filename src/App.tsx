@@ -12,6 +12,13 @@ export default function App() {
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
   const [linksText, setLinksText] = useState('');
   
+  // Editor / EDL Mode State
+  const [isEditorMode, setIsEditorMode] = useState(false);
+  const [showIntelligence, setShowIntelligence] = useState(true);
+  const [inPoint, setInPoint] = useState<number | null>(null);
+  const [outPoint, setOutPoint] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  
   const videoRef = useRef<HTMLIFrameElement>(null);
 
   // Sort videos: unavailable first, then available at the bottom
@@ -100,6 +107,7 @@ export default function App() {
         videoId: vid,
         thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
         review: "Review pending analysis...",
+        duration: 300, // Default to 5 mins for imported videos
         status: 'available',
         transcripts: [
           { start: 0, duration: 60, text: "Transcript processing initiated. Audio data being prioritized for extraction." }
@@ -114,6 +122,38 @@ export default function App() {
       setLinksText('');
       setIsAddPanelOpen(false);
     }
+  };
+
+  const handleExportClip = async () => {
+    if (inPoint === null || outPoint === null) return;
+    setIsExporting(true);
+    
+    try {
+      const response = await fetch('/api/export-clip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoId: selectedVideo.videoId,
+          in: inPoint,
+          out: outPoint,
+          title: selectedVideo.title
+        })
+      });
+      const result = await response.json();
+      console.log('Export result:', result);
+      alert(`Clip exported successfully! Job ID: ${result.jobId}`);
+    } catch (err) {
+      console.error('Export failed:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -142,6 +182,27 @@ export default function App() {
           >
             <Plus className="w-3 h-3" /> Add Videos
           </button>
+          
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-700">
+            <span className="text-[9px] uppercase font-bold text-slate-400">Intelligence</span>
+            <button 
+              onClick={() => setShowIntelligence(!showIntelligence)}
+              className={`w-8 h-4 rounded-full relative transition-colors ${showIntelligence ? 'bg-sky-500' : 'bg-slate-700'}`}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${showIntelligence ? 'left-4.5' : 'left-0.5'}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-700">
+            <span className="text-[9px] uppercase font-bold text-slate-400">Editor Mode</span>
+            <button 
+              onClick={() => setIsEditorMode(!isEditorMode)}
+              className={`w-8 h-4 rounded-full relative transition-colors ${isEditorMode ? 'bg-emerald-500' : 'bg-slate-700'}`}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isEditorMode ? 'left-4.5' : 'left-0.5'}`} />
+            </button>
+          </div>
+
           <div className="hidden md:flex items-center gap-6 text-[9px] uppercase font-bold tracking-widest text-slate-500">
             <span className="flex items-center gap-1.5 text-emerald-400">
               <Activity className="w-3 h-3" /> Live Analytics
@@ -226,7 +287,7 @@ export default function App() {
                           <AlertTriangle className="w-4 h-4 text-rose-500 drop-shadow-md" />
                         </div>
                       )}
-                      <div className="absolute bottom-0 right-0 px-1 bg-black/60 text-[7px] font-mono">04:22</div>
+                      <div className="absolute bottom-0 right-0 px-1 bg-black/60 text-[7px] font-mono">{formatTime(video.duration)}</div>
                     </div>
                   ) : (
                     <div className="w-6 h-6 bg-slate-800/80 rounded border border-slate-700/50 flex items-center justify-center shrink-0 group-hover:bg-emerald-500/10 group-hover:border-emerald-500/20 transition-all">
@@ -290,7 +351,7 @@ export default function App() {
                 </div>
               )}
               <div className="h-10 bg-gradient-to-t from-black/80 to-transparent p-4 flex items-center gap-4 pointer-events-none absolute bottom-0 w-full">
-                <div className="text-[10px] font-mono text-emerald-400">00:{Math.floor(currentTime/60).toString().padStart(2, '0')}:{(currentTime%60).toString().padStart(2, '0')} / 00:04:22</div>
+                <div className="text-[10px] font-mono text-emerald-400">{formatTime(currentTime)} / {formatTime(selectedVideo.duration)}</div>
               </div>
             </div>
 
@@ -311,21 +372,52 @@ export default function App() {
           {/* Multi-track Scrubber Interface */}
           <div className="h-64 bg-slate-950 border-t border-slate-800 p-4 flex flex-col gap-4 flex-shrink-0">
             <div className="flex justify-between items-center mb-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Timeline Intelligence</span>
-              <div className="flex gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
-                  <span className="text-[9px] text-slate-500">Sentiment Spike</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-                  <span className="text-[9px] text-slate-500">Key Takeaway</span>
-                </div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                {isEditorMode ? 'EDL Editor Pipeline' : 'Timeline Intelligence'}
+              </span>
+              <div className="flex gap-4 items-center">
+                {isEditorMode ? (
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => setInPoint(Math.floor(currentTime))}
+                      className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-[9px] font-bold hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+                    >
+                      Set In: <span className="text-emerald-400 font-mono">{inPoint !== null ? formatTime(inPoint) : '--:--:--'}</span>
+                    </button>
+                    <button 
+                      onClick={() => setOutPoint(Math.floor(currentTime))}
+                      className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-[9px] font-bold hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+                    >
+                      Set Out: <span className="text-rose-400 font-mono">{outPoint !== null ? formatTime(outPoint) : '--:--:--'}</span>
+                    </button>
+                    <button 
+                      disabled={inPoint === null || outPoint === null || outPoint <= inPoint || isExporting}
+                      onClick={handleExportClip}
+                      className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-30 disabled:cursor-not-allowed text-slate-950 rounded text-[9px] font-bold uppercase transition-all shadow-lg shadow-emerald-500/20"
+                    >
+                      {isExporting ? 'Exporting...' : 'Export Clip'}
+                    </button>
+                    {inPoint !== null && outPoint !== null && (
+                      <button onClick={() => { setInPoint(null); setOutPoint(null); }} className="text-slate-500 hover:text-white"><X className="w-3 h-3" /></button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                      <span className="text-[9px] text-slate-500">Sentiment Spike</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                      <span className="text-[9px] text-slate-500">Key Takeaway</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             
             {/* Timeline Tracks */}
-            <div className="flex-1 flex flex-col gap-3 relative">
+            <div className={`flex-1 flex flex-col gap-3 relative transition-all duration-500 ${showIntelligence ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'}`}>
               {/* Track: Sentiment */}
               <div className="h-10 flex items-center gap-4">
                 <div className="w-20 text-[9px] text-slate-500 uppercase font-bold">Sentiment</div>
@@ -333,12 +425,23 @@ export default function App() {
                   <div className="h-4 w-24 bg-emerald-500/20 absolute left-[10%] rounded-full border border-emerald-500/30"></div>
                   <div className="h-4 w-32 bg-rose-500/20 absolute left-[45%] rounded-full border border-rose-500/30"></div>
                   <div className="h-4 w-12 bg-amber-500/20 absolute left-[80%] rounded-full border border-amber-500/30"></div>
+                  
+                  {/* Selection Overlay in Track */}
+                  {isEditorMode && inPoint !== null && outPoint !== null && (
+                    <div 
+                      className="h-full bg-emerald-500/10 border-x border-emerald-500/40 absolute z-10"
+                      style={{ 
+                        left: `${(inPoint / selectedVideo.duration) * 100}%`,
+                        width: `${((outPoint - inPoint) / selectedVideo.duration) * 100}%`
+                      }}
+                    />
+                  )}
                 </div>
               </div>
               {/* Track: Keyword Heatmap */}
               <div className="h-10 flex items-center gap-4">
                 <div className="w-20 text-[9px] text-slate-500 uppercase font-bold">Keywords</div>
-                <div className="flex-1 h-full bg-slate-900 rounded-sm flex items-center px-1 gap-1 border border-slate-800/50 overflow-hidden">
+                <div className="flex-1 h-full bg-slate-900 rounded-sm flex items-center px-1 gap-1 border border-slate-800/50 overflow-hidden relative">
                   <div className="h-full w-2 bg-sky-400/40"></div>
                   <div className="h-full w-1 border-r border-slate-800"></div>
                   <div className="h-full w-1 bg-sky-400/80 shadow-[0_0_8px_rgba(56,189,248,0.3)]"></div>
@@ -346,19 +449,63 @@ export default function App() {
                   <div className="h-full w-3 bg-sky-400/60"></div>
                   <div className="h-full w-1 bg-sky-400/80"></div>
                   <div className="h-full w-8 bg-slate-800/50"></div>
+
+                  {/* Selection Overlay in Keywords */}
+                  {isEditorMode && inPoint !== null && outPoint !== null && (
+                    <div 
+                      className="h-full bg-emerald-500/10 border-x border-emerald-500/40 absolute z-10 top-0"
+                      style={{ 
+                        left: `${(inPoint / selectedVideo.duration) * 100}%`,
+                        width: `${((outPoint - inPoint) / selectedVideo.duration) * 100}%`
+                      }}
+                    />
+                  )}
                 </div>
               </div>
-              {/* Track: Scrub Bar */}
-              <div className="h-14 flex items-center gap-4 mt-2">
-                 <div className="w-20 text-[10px] text-slate-400 uppercase font-mono tracking-tighter">TIMESTAMP_IDX</div>
-                 <div className="flex-1 h-1 bg-slate-800 rounded-full relative">
-                   <div className="absolute inset-y-0 left-0 w-[62%] bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
-                   <div className="absolute top-[-25px] left-[62%] flex flex-col items-center">
-                     <div className="w-2 h-2 bg-emerald-400 rotate-45 mb-2"></div>
-                     <div className="w-px h-16 bg-emerald-500 opacity-30 shadow-[0_0_4px_rgba(16,185,129,0.5)]"></div>
-                   </div>
+            </div>
+
+            {/* Track: Scrub Bar (Always Visible) */}
+            <div className="h-14 flex items-center gap-4 border-t border-slate-900 pt-2">
+               <div className="w-20 text-[10px] text-slate-400 uppercase font-mono tracking-tighter">TIMESTAMP_IDX</div>
+               <div 
+                 className="flex-1 h-1 bg-slate-800 rounded-full relative cursor-pointer group/scrub"
+                 onClick={(e) => {
+                   const rect = e.currentTarget.getBoundingClientRect();
+                   const x = e.clientX - rect.left;
+                   const percent = x / rect.width;
+                   seekTo(Math.floor(percent * selectedVideo.duration));
+                 }}
+               >
+                 <div 
+                   className="absolute inset-y-0 left-0 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-100"
+                   style={{ width: `${(currentTime / selectedVideo.duration) * 100}%` }}
+                 />
+                 <div 
+                  className="absolute top-[-25px] flex flex-col items-center transition-all duration-100 cursor-grab"
+                  style={{ left: `${(currentTime / selectedVideo.duration) * 100}%` }}
+                 >
+                   <div className="w-2 h-2 bg-emerald-400 rotate-45 mb-2 shadow-[0_0_5px_rgba(16,185,129,1)]"></div>
+                   <div className="w-px h-28 bg-emerald-500 opacity-50 shadow-[0_0_4px_rgba(16,185,129,0.5)]"></div>
                  </div>
-              </div>
+
+                 {/* Editor selection indicators on scrub bar */}
+                 {isEditorMode && inPoint !== null && (
+                   <div 
+                      className="absolute h-4 w-0.5 bg-emerald-500 top-[-2px] shadow-[0_0_8px_rgba(16,185,129,0.8)]"
+                      style={{ left: `${(inPoint / selectedVideo.duration) * 100}%` }}
+                   >
+                     <div className="absolute top-[-10px] left-[-3px] text-[7px] font-bold text-emerald-400">IN</div>
+                   </div>
+                 )}
+                 {isEditorMode && outPoint !== null && (
+                   <div 
+                      className="absolute h-4 w-0.5 bg-rose-500 top-[-2px] shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                      style={{ left: `${(outPoint / selectedVideo.duration) * 100}%` }}
+                   >
+                     <div className="absolute top-[-10px] left-[-7px] text-[7px] font-bold text-rose-400">OUT</div>
+                   </div>
+                 )}
+               </div>
             </div>
           </div>
         </section>

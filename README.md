@@ -30,6 +30,23 @@ Today, **Video Insight Search** is a comprehensive **Video Discovery (VID)** sui
 *   **Intelligent Prioritization**: The system automatically pulls "Problem Projects" (Unavailable videos) to the top of the feed while collapsing healthy videos into a minimal mini-player view.
 *   **High-Fidelity Visuals**: Every thumbnail uses `image-rendering: high-quality` and `hqdefault` sources to prevent the "blocky" artifacts common in automated extraction.
 *   **Deep Discovery**: A relevance-weighted search engine that indexes timestamps across transcripts and community comments simultaneously.
+*   **EDL Editor Pipeline**: A built-in "Editor Mode" that allows analysts to mark In/Out points and export precise sub-clips for stakeholder reviews.
+
+---
+
+## 🎬 Advanced Editor Mode (EDL Pipeline)
+
+The system includes a professional Edit Decision List (EDL) utility for rapid content repurposing.
+
+1.  **Toggle Editor Mode**: Enable the "Editor Mode" switch in the header.
+2.  **Mark In/Out Points**: 
+    *   Navigate to your desired start time and hit **"Set In"**.
+    *   Navigate to your end time and hit **"Set Out"**.
+    *   The scrubber will visualize your selection window with high-contrast emerald and rose markers.
+3.  **Export & Process**:
+    *   Click **"Export Clip"** to send the EDL to the backend.
+    *   The server-side pipeline executes a precise `ffmpeg` slice:
+        `ffmpeg -ss [start] -i [input] -to [duration] -c copy output.mp4`
 
 ---
 

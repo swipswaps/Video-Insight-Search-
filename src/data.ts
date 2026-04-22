@@ -47,6 +47,8 @@ export interface VideoData {
   thumbnail: string;
   /** AI-generated analytical summary */
   review: string;
+  /** Total duration in seconds */
+  duration: number;
   /** Operating status */
   status: VideoStatus;
   /** Complete transcript timeline */
@@ -66,6 +68,7 @@ export const MOCK_VIDEOS: VideoData[] = [
     videoId: "L6RfIUUhgLs",
     thumbnail: "https://img.youtube.com/vi/L6RfIUUhgLs/hqdefault.jpg",
     review: "A detailed investigation into pivotal moments that shifted national policy. Analyzes legislative feedback and social impacts.",
+    duration: 262,
     status: 'available',
     transcripts: [
       { start: 0, duration: 30, text: "The beginning of the decade saw unprecedented changes in infrastructure." },
@@ -82,6 +85,7 @@ export const MOCK_VIDEOS: VideoData[] = [
     videoId: "BDlHx6NJx7I",
     thumbnail: "https://img.youtube.com/vi/BDlHx6NJx7I/hqdefault.jpg",
     review: "Evaluation of the new aesthetic direction for the 2026 product lineup. Focus on high-density color palettes and motion design.",
+    duration: 180,
     status: 'available',
     transcripts: [
       { start: 0, duration: 20, text: "Our new brand identity focuses on clarity and vibrant emerald accents." },
@@ -98,6 +102,7 @@ export const MOCK_VIDEOS: VideoData[] = [
     videoId: "4-NZ_5aB2Z0",
     thumbnail: "https://img.youtube.com/vi/4-NZ_5aB2Z0/hqdefault.jpg",
     review: "Deep dive into back-end infrastructure and dockerized environments for media processing pipelines.",
+    duration: 600,
     status: 'available',
     transcripts: [
       { start: 0, duration: 15, text: "Operating inside a container requires strict dependency management." },
