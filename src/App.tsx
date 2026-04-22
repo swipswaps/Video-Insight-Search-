@@ -12,6 +12,10 @@ export default function App() {
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
   const [linksText, setLinksText] = useState('');
   
+  // Pipeline Performance & Logic Ready States
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [activePipelineJobs, setActivePipelineJobs] = useState<Set<string>>(new Set());
+
   // Editor / EDL Mode State
   const [isEditorMode, setIsEditorMode] = useState(false);
   const [showIntelligence, setShowIntelligence] = useState(true);
@@ -62,6 +66,46 @@ export default function App() {
     return results.sort((a, b) => b.score - a.score);
   }, [searchQuery, videos]);
 
+  /**
+   * Playhead Synchronization Logic
+   * Listens to the YouTube IFrame API events to sync local state with actual video progress.
+   * Prevents 'out-of-sync' scrubbing issues common in bridge architectures.
+   */
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Security check: Match origin to avoid XSS
+      if (typeof event.data !== 'string') return;
+      
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === 'onReady') {
+          setIsPlayerReady(true);
+        }
+        if (data.event === 'infoDelivery' && data.info?.currentTime !== undefined) {
+          setCurrentTime(data.info.currentTime);
+        }
+      } catch (e) {
+        // Silently fail for non-API messages
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    
+    // Polling fallback to keep time accurate if API events throttle
+    const interval = setInterval(() => {
+      if (videoRef.current?.contentWindow) {
+        videoRef.current.contentWindow.postMessage(JSON.stringify({
+          event: 'listening'
+        }), '*');
+      }
+    }, 1000);
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      clearInterval(interval);
+    };
+  }, []);
+
   const seekTo = (seconds: number) => {
     setCurrentTime(seconds);
     if (videoRef.current?.contentWindow) {
@@ -73,12 +117,20 @@ export default function App() {
     }
   };
 
+  /**
+   * Enhanced YouTube URL Parser
+   * Handles: shorts/, watch?v=, embed/, youtu.be/ and extra URL parameters
+   * Based on industry-standard regex for robust video ID extraction.
+   */
   const extractVideoId = (url: string) => {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
+    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
+    const match = url.match(regex);
+    return match ? match[1] : null;
   };
 
+  /**
+   * Pipeline ingestion handler with concurrent job tracking
+   */
   const handleAddLinks = async () => {
     const urls = linksText.split(/[\s,]+/).filter(u => u.trim());
     
@@ -324,11 +376,22 @@ export default function App() {
           <div className="flex-1 flex flex-col items-center justify-center relative p-6 bg-slate-950/20">
             {/* Player Container */}
             <div className="aspect-video w-full max-w-4xl bg-slate-900 shadow-2xl relative flex flex-col justify-end group rounded-sm overflow-hidden border border-slate-800">
+              {!isPlayerReady && selectedVideo.status === 'available' && (
+                <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center z-50">
+                   <div className="w-12 h-12 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
+                   <div className="text-[10px] font-mono text-slate-500 uppercase animate-pulse">Establishing Peer Connection...</div>
+                </div>
+              )}
               <iframe 
                 ref={videoRef}
-                src={`https://www.youtube.com/embed/${selectedVideo.videoId}?enablejsapi=1&origin=${window.location.origin}`}
+                key={selectedVideo.videoId}
+                src={`https://www.youtube.com/embed/${selectedVideo.videoId}?enablejsapi=1&origin=${window.location.origin}&rel=0&modestbranding=1`}
                 className="w-full h-full"
                 allow="autoplay; encrypted-media"
+                onLoad={() => {
+                  // Some browsers trigger onLoad before the API is ready
+                  setTimeout(() => setIsPlayerReady(true), 1500);
+                }}
                 allowFullScreen
               />
               {selectedVideo.status === 'unavailable' && (

@@ -112,3 +112,28 @@ docker run -p 3000:3000 video-insight-search
 
 > **Status Flagging**
 > "'active projects' list should flag unavailable videos" -> *Implemented `VideoStatus` type with rose-500 pulse indicators.*
+
+---
+
+## 🛠 Troubleshooting & Best Practices
+
+The application implements cutting-edge patterns to resolve common playback and extraction hurdles.
+
+### 1. "Establishing Peer Connection" hangs
+**Root Cause**: YouTube's IFrame API requires a valid `origin` parameter and an active socket to communicate `postMessage` events. 
+**Resolution**:
+- Ensure your browser is not blocking 3rd-party cookies.
+- If the loader persists, click the video once to initiate the YouTube session; the UI will sync the playhead automatically once established.
+
+### 2. Invalid Video IDs
+**Root Cause**: Standard regex often fails on `youtube.com/shorts/` or complex URLs with UTM parameters.
+**Resolution**: We use a **High-Entropy Regex** parser that extracts IDs from standard, short, and embedded formats:
+`/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i`
+
+### 3. Out-of-sync Scrubber
+**Root Cause**: Local React state can drift from the IFrame's actual position due to network lag.
+**Resolution**: Implemented a **Polling Synchronizer** that listens for `infoDelivery` messages from the YouTube API, forcing the React `currentTime` to stay locked to the source content.
+
+### 4. Docker Dependency Failures
+**Root Cause**: `ffmpeg` extraction requires specific codecs that are often missing in slim images.
+**Resolution**: The `Dockerfile` uses **Ubuntu 22.04 LTS** as its base layer to ensure maximum compatibility with `libavcodec` and `yt-dlp` dependencies.
