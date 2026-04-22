@@ -1,29 +1,64 @@
+/**
+ * Represents a single timed entry in the video transcript.
+ * Used for playhead synchronization and search indexing.
+ */
 export interface TranscriptSegment {
+  /** Offset from video start in seconds */
   start: number;
+  /** Length of the segment in seconds */
   duration: number;
+  /** The captured text for this segment */
   text: string;
 }
 
+/**
+ * Represents a user comment extracted from the video platform.
+ */
 export interface VideoComment {
+  /** Unique comment identifier */
   id: string;
+  /** Username of the commenter */
   author: string;
+  /** Content of the comment */
   text: string;
+  /** ISO or relative string representation of comment age */
   timestamp: string;
 }
 
+/**
+ * Availability states for the video processing pipeline.
+ * - available: Stream is ready for playback and analysis.
+ * - unavailable: Source data could not be reached (e.g. 404 or Geo-blocked).
+ * - checking: Pipeline is currently probing the remote endpoint.
+ */
 export type VideoStatus = 'available' | 'unavailable' | 'checking';
 
+/**
+ * The primary data model for a Project in the VID (Video Insight Discovery) suite.
+ */
 export interface VideoData {
+  /** Internal unique ID */
   id: string;
+  /** Human-readable title */
   title: string;
+  /** Platform-specific ID (e.g. YouTube ID) */
   videoId: string;
+  /** High-resolution image URL */
   thumbnail: string;
+  /** AI-generated analytical summary */
   review: string;
+  /** Operating status */
   status: VideoStatus;
+  /** Complete transcript timeline */
   transcripts: TranscriptSegment[];
+  /** Aggregate community feedback */
   comments: VideoComment[];
 }
 
+/**
+ * Initial seed data for the application's VID project library.
+ * Features selected historical, marketing, and technical nodes for demo purposes.
+ */
 export const MOCK_VIDEOS: VideoData[] = [
   {
     id: "1",

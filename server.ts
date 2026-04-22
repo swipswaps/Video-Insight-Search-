@@ -4,65 +4,102 @@ import path from "path";
 import { exec } from "child_process";
 import fs from "fs";
 
+/**
+ * Server initialization and entry point for the VID pipeline backend.
+ * Orchestrates Vite middleware for HMR and custom API endpoints for media processing.
+ */
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Enable JSON body parsing for inbound API requests
   app.use(express.json());
 
-  // API Route: Download and Process Video
+  /**
+   * API Route: Download and Process Video
+   * 
+   * This endpoint serves as the ingestion gateway for the VID pipeline.
+   * It simulates the interaction with heavy media binaries (ffmpeg, yt-dlp)
+   * while providing a standard JSON interface for the frontend.
+   */
   app.post("/api/process-video", (req, res) => {
     const { url } = req.body;
-    if (!url) return res.status(400).json({ error: "URL is required" });
 
-    const videoId = Math.random().toString(36).substring(7);
-    const outputPath = path.join(process.cwd(), "downloads", `${videoId}.mp4`);
-    const transcriptPath = path.join(process.cwd(), "downloads", `${videoId}.txt`);
-
-    if (!fs.existsSync("downloads")) {
-      fs.mkdirSync("downloads");
+    // Guard clause: Ensure a valid target URL is provided
+    if (!url) {
+      return res.status(400).json({ error: "Target URL is strictly required for pipeline ingestion." });
     }
 
-    // SIMULATED: Using youtube-dl and ffmpeg
-    // Command pattern: youtube-dl -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4' --output "downloads/%(id)s.%(ext)s" [URL]
-    // Then ffmpeg to convert or extract audio if needed.
-    
-    console.log(`[BACKEND] Initiating pipeline for: ${url}`);
-    
-    // In a real environment with binaries installed, we would run:
-    // exec(`youtube-dl -o "${outputPath}" ${url} && ffmpeg -i "${outputPath}" -vn -ab 128k -ar 44100 -y "${transcriptPath}.mp3"`, (err, stdout, stderr) => { ... });
+    // Generate a unique identifier for the specific processing job
+    const videoId = Math.random().toString(36).substring(7);
+    const downloadsDir = path.join(process.cwd(), "downloads");
+    const outputPath = path.join(downloadsDir, `${videoId}.mp4`);
 
-    // Mock response for demo purposes
+    // Ensure persistence directory exists; idempotent check
+    if (!fs.existsSync(downloadsDir)) {
+      try {
+        fs.mkdirSync(downloadsDir, { recursive: true });
+      } catch (err) {
+        console.error(`[FS_ERROR] Failed to establish downloads directory: ${err}`);
+      }
+    }
+
+    /**
+     * @SIMULATED_PIPELINE
+     * 
+     * In a live production environment, this node would spawn a child process
+     * to execute media extraction and transcription:
+     * 
+     * 1. youtube-dl --extract-audio --audio-format mp3 -o "%(id)s.%(ext)s" [URL]
+     * 2. ffmpeg -i [AUDIO] -f segments -segment_time 10 [PROBES]
+     * 3. Send segments to OpenAI Whisper for local transcription.
+     */
+    console.log(`[PIPELINE_INIT] Source: ${url} | Job_ID: ${videoId}`);
+    
+    // Asynchronous mock response to simulate I/O wait latency
     setTimeout(() => {
       res.json({
         success: true,
         videoId,
-        message: "Video processed via youtube-dl and ffmpeg pipeline.",
+        metadata: {
+          processedAt: new Date().toISOString(),
+          pipelineVersion: "v2.4",
+          node: "AIS-VID-SERVER"
+        },
+        message: "Source ingested successfully. Background extraction triggered.",
         mockData: {
-          title: "Processed Stream " + videoId,
+          title: "Stream Pipeline: " + videoId,
           status: "available"
         }
       });
     }, 2000);
   });
 
-  // Vite middleware for development
+  /**
+   * Environment Routing Logic
+   * 
+   * PRODUCTION: Serves pre-compiled static assets from the /dist directory.
+   * DEVELOPMENT: Injects Vite HMR middleware for ultra-fast component iterations.
+   */
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
+    // Vite middleware MUST be applied after custom API routes to avoid path shadowing
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
+    // SPA Fallback: Routes all non-file requests to index.html for client-side routing
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
+  // Bind server to all network interfaces for container compatibility
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`[BOOT] VID Suite operational at http://localhost:${PORT}`);
   });
 }
 
