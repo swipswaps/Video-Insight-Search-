@@ -50,8 +50,24 @@ export default function App() {
     return (match && match[2].length === 11) ? match[2] : null;
   };
 
-  const handleAddLinks = () => {
+  const handleAddLinks = async () => {
     const urls = linksText.split(/[\s,]+/).filter(u => u.trim());
+    
+    // Call backend for each link to simulate processing
+    for (const url of urls) {
+      try {
+        const response = await fetch('/api/process-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const result = await response.json();
+        console.log('Backend processing result:', result);
+      } catch (err) {
+        console.error('Failed to contact processing pipeline:', err);
+      }
+    }
+
     const newVideos: VideoData[] = urls.map(url => {
       const vid = extractVideoId(url);
       if (!vid) return null;

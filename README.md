@@ -70,9 +70,30 @@ The app utilizes **Tailwind CSS v4** with a custom theme:
 
 ---
 
-## 🛠 Tech Stack
-- **React 19 & TypeScript**: Core component logic and type safety.
-- **Framer Motion**: Smooth state transitions and search results overlays.
-- **Vite**: Ultra-fast build tool and development server.
-- **Lucide React**: High-density icon set.
-- **YouTube IFrame API**: Programmatic video control.
+## 🔬 Competitive Analysis & Future Features
+
+Popular open-source repositories that approximate this functionality include:
+
+1.  **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**: The industry standard for downloading. Implementation uses this backbone for media extraction.
+2.  **[OpenAI Whisper](https://github.com/openai/whisper)**: State-of-the-art transcription. 
+    *   *Recommended Feature*: Integrate Whisper nodes to provide 99% accuracy auto-generated transcripts instead of relying on YouTube's API.
+3.  **[Video-Indexer](https://github.com/Azure/azure-video-indexer)**: Deep ML suite.
+    *   *Recommended Feature*: **Multi-speaker Diarization**. Identifying *who* is speaking when is critical for professional analysis.
+    *   *Recommended Feature*: **Semantic Search**. Moving from string matching to vector-based embeddings (e.g., using Pinecone or Milvus) would allow users to search for "User frustration" even if the word "frustration" isn't in the text.
+
+---
+
+## 🐳 Docker Management
+
+Dependency management is handled via Docker to ensure `ffmpeg` and `python` environments are consistent across nodes.
+
+### Build & Run
+```bash
+docker build -t video-insight-search .
+docker run -p 3000:3000 video-insight-search
+```
+
+### Included in Image:
+- **Python 3 / youtube-dl**: For high-bandwidth media extraction.
+- **FFmpeg**: For audio-to-text preprocessing and stream conversion.
+- **Node.js 20**: Standard high-performance runtime.
