@@ -1,147 +1,181 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
+import { fileURLToPath } from "url";
+import * as pkg from "./node_modules/youtube-transcript/dist/youtube-transcript.esm.js";
+const { fetchTranscript: libraryFetchTranscript } = pkg;
+import { createServer as createViteServer } from "vite";
+
 import { exec } from "child_process";
-import fs from "fs";
+import { promisify } from "util";
+
+const execPromise = promisify(exec);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
- * Server initialization and entry point for the VID pipeline backend.
- * Orchestrates Vite middleware for HMR and custom API endpoints for media processing.
+ * Manual fallback to extract transcripts directly from the YouTube page data.
+ * This is used when the library scraper is blocked or fails to find tracks.
  */
+async function fetchTranscriptManual(videoId: string) {
+  // Use desktop URL with high-fidelity headers to mimic a real browser
+  const url = `https://www.youtube.com/watch?v=${videoId}&hl=en&gl=US`;
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "Cache-Control": "max-age=0",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+      "Sec-Fetch-User": "?1",
+      "Upgrade-Insecure-Requests": "1"
+    }
+  });
+  
+  const html = await response.text();
+  
+  // Look for the initial data blob which contains caption tracks
+  const regex = /ytInitialPlayerResponse\s*=\s*({.+?});/s;
+  const match = html.match(regex);
+  
+  if (!match) {
+    if (html.includes("Sign in to confirm you’re not a bot")) {
+      throw new Error("YouTube blocked the automated probe (Bot Challenge). Switch to AI Research mode.");
+    }
+    throw new Error("Unable to locate player data in source.");
+  }
+
+  const data = JSON.parse(match[1]);
+  const captionTracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+  if (!captionTracks || !Array.isArray(captionTracks) || captionTracks.length === 0) {
+    throw new Error("No caption tracks detected in player response. Subtitles may be restricted.");
+  }
+
+  // Prefer English (en) or the first available track
+  const track = captionTracks.find((t: any) => t.languageCode === 'en') || captionTracks[0];
+  const trackUrl = track.baseUrl;
+
+  const trackResponse = await fetch(trackUrl);
+  const xml = await trackResponse.text();
+
+  // Simple XML parser for the timed text format
+  const segments = [];
+  const textRegex = /<text start="([\d.]+)" dur="([\d.]+)".*?>(.*?)<\/text>/g;
+  let textMatch;
+  
+  while ((textMatch = textRegex.exec(xml)) !== null) {
+    segments.push({
+      offset: parseFloat(textMatch[1]) * 1000,
+      duration: parseFloat(textMatch[2]) * 1000,
+      text: textMatch[3]
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+    });
+  }
+
+  return segments;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Enable JSON body parsing for inbound API requests
   app.use(express.json());
 
-  /**
-   * API Route: Download and Process Video
-   * 
-   * This endpoint serves as the ingestion gateway for the VID pipeline.
-   * It simulates the interaction with heavy media binaries (ffmpeg, yt-dlp)
-   * while providing a standard JSON interface for the frontend.
-   */
-  app.post("/api/process-video", (req, res) => {
-    const { url } = req.body;
-
-    // Guard clause: Ensure a valid target URL is provided
-    if (!url) {
-      return res.status(400).json({ error: "Target URL is strictly required for pipeline ingestion." });
-    }
-
-    // Generate a unique identifier for the specific processing job
-    const videoId = Math.random().toString(36).substring(7);
-    const downloadsDir = path.join(process.cwd(), "downloads");
-    const outputPath = path.join(downloadsDir, `${videoId}.mp4`);
-
-    // Ensure persistence directory exists; idempotent check
-    if (!fs.existsSync(downloadsDir)) {
-      try {
-        fs.mkdirSync(downloadsDir, { recursive: true });
-      } catch (err) {
-        console.error(`[FS_ERROR] Failed to establish downloads directory: ${err}`);
-      }
-    }
-
-    /**
-     * @SIMULATED_PIPELINE
-     * 
-     * In a live production environment, this node would spawn a child process
-     * to execute media extraction and transcription:
-     * 
-     * 1. youtube-dl --extract-audio --audio-format mp3 -o "%(id)s.%(ext)s" [URL]
-     * 2. ffmpeg -i [AUDIO] -f segments -segment_time 10 [PROBES]
-     * 3. Send segments to OpenAI Whisper for local transcription.
-     */
-    console.log(`[PIPELINE_INIT] Source: ${url} | Job_ID: ${videoId}`);
-    
-    // Asynchronous mock response to simulate I/O wait latency
-    // Simulate accurate metadata extraction (as if using yt-dlp)
-    setTimeout(() => {
-      // Mocked duration logic: deterministic based on ID for consistency
-      const seed = videoId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const accurateDuration = 600 + (seed % 3000); // 10 to 60 minutes
+  // Upgrade / Git Sync Pipeline
+  app.get("/api/upgrade/check", async (req, res) => {
+    try {
+      await execPromise("git fetch --quiet");
+      const { stdout: local } = await execPromise("git rev-parse HEAD");
+      const { stdout: remote } = await execPromise("git rev-parse @{u}");
       
-      res.json({
-        success: true,
-        videoId,
-        metadata: {
-          processedAt: new Date().toISOString(),
-          pipelineVersion: "yt-dlp-integrated-v3.0",
-          node: "AIS-METADATA-PROBE"
-        },
-        message: "Source metadata extracted via deep secondary probe.",
-        mockData: {
-          title: "Stream Pipeline: " + videoId,
-          status: "available",
-          duration: accurateDuration
-        }
+      res.json({ 
+        updatable: local.trim() !== remote.trim(),
+        local: local.trim().substring(0, 7),
+        remote: remote.trim().substring(0, 7)
       });
-    }, 2500);
-  });
-
-  /**
-   * API Route: Export Video Clip (EDL Processor)
-   * 
-   * This endpoint processes an Edit Decision List (EDL) using ffmpeg 
-   * to slice a specific segment with high precision.
-   */
-  app.post("/api/export-clip", (req, res) => {
-    const { videoId, in: inPoint, out: outPoint, title } = req.body;
-    
-    if (inPoint === undefined || outPoint === undefined) {
-      return res.status(400).json({ error: "In/Out points are required for EDL exportation." });
+    } catch (e) {
+      res.status(500).json({ error: "Git environment detached or unavailable." });
     }
-
-    const jobId = Math.random().toString(36).substring(7);
-    console.log(`[EDL_PROCESSOR] Exporting clip: ${title} | Range: ${inPoint}s -> ${outPoint}s | Job: ${jobId}`);
-
-    /**
-     * @SIMULATED_FFMPEG_EDL
-     * 
-     * command: ffmpeg -ss [inPoint] -i [input_source] -to [outPoint - inPoint] -c copy [outputPath]
-     */
-    
-    setTimeout(() => {
-      res.json({
-        success: true,
-        jobId,
-        exportUrl: `https://storage.googleapis.com/vid-suite-exports/${jobId}.mp4`,
-        metadata: {
-          originalId: videoId,
-          duration: outPoint - inPoint,
-          precision: "accurate-frame"
-        }
-      });
-    }, 1500);
   });
 
-  /**
-   * Environment Routing Logic
-   * 
-   * PRODUCTION: Serves pre-compiled static assets from the /dist directory.
-   * DEVELOPMENT: Injects Vite HMR middleware for ultra-fast component iterations.
-   */
+  app.post("/api/upgrade/apply", async (req, res) => {
+    try {
+      const { stdout } = await execPromise("git pull --force && npm install");
+      res.json({ success: true, log: stdout });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // API Route to fetch verbatim YouTube transcripts
+  app.get("/api/transcript/:videoId", async (req, res) => {
+    const { videoId } = req.params;
+    console.log(`[VERBATIM_LOG] Fetching transcript for: ${videoId}`);
+    
+    try {
+      let transcript;
+      try {
+        // Stage 1: Official/Library Scraper
+        transcript = await libraryFetchTranscript(videoId);
+      } catch (e) {
+        console.warn(`[VERBATIM_PIPELINE] Library fetch failed for ${videoId}, attempting manual fallback...`);
+        // Stage 2: Manual Browser-like Scraper
+        transcript = await fetchTranscriptManual(videoId);
+      }
+      
+      // Map to our internal TranscriptSegment format
+      const segments = transcript.map((entry, index) => {
+        // Library usually returns seconds, but some sources might return ms.
+        // We ensure we have seconds for the frontend Timeline.
+        const start = entry.offset > 10000 ? Math.floor(entry.offset / 1000) : Math.floor(entry.offset);
+        const duration = entry.duration > 10000 ? Math.floor(entry.duration / 1000) : Math.floor(entry.duration);
+        
+        return {
+          id: `yt-${videoId}-${index}`,
+          start,
+          duration,
+          text: entry.text,
+          isStatic: false
+        };
+      });
+
+      res.json({ success: true, transcripts: segments });
+    } catch (error) {
+      console.error(`[VERBATIM_ERROR] Failed to fetch transcript:`, error);
+      res.status(500).json({ 
+        success: false, 
+        error: "Verbatim transcript unavailable or disabled for this video." 
+      });
+    }
+  });
+
+  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: false // Disable HMR to prevent port 24678 conflicts in this environment
+      },
       appType: "spa",
     });
-    // Vite middleware MUST be applied after custom API routes to avoid path shadowing
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    // SPA Fallback: Routes all non-file requests to index.html for client-side routing
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  // Bind server to all network interfaces for container compatibility
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[BOOT] VID Suite operational at http://localhost:${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 

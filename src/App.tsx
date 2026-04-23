@@ -2,34 +2,150 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Play, Pause, ChevronLeft, ChevronRight, MessageSquare, List, Clock, Info, Activity, Database, User, Plus, X, AlertTriangle, ExternalLink, Trash2, Scissors, SkipForward } from 'lucide-react';
 import { MOCK_VIDEOS, VideoData, TranscriptSegment } from './data';
-import { GoogleGenAI } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { GoogleGenAI, Type } from "@google/genai";
+import { auth, signIn, logout } from './lib/firebase';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const [videos, setVideos] = useState<VideoData[]>(MOCK_VIDEOS);
-  const [selectedVideoId, setSelectedVideoId] = useState(MOCK_VIDEOS[0].id);
+  const [selectedVideoId, setSelectedVideoId] = useState(MOCK_VIDEOS.length > 0 ? MOCK_VIDEOS[0].id : "");
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'transcript' | 'comments'>('transcript');
   const [currentTime, setCurrentTime] = useState(0);
   const [playerState, setPlayerState] = useState<number>(-1); // -1: unstarted
   const [hasStartedPlaying, setHasStartedPlaying] = useState(false);
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [linksText, setLinksText] = useState('');
+  const [isInjecting, setIsInjecting] = useState(false);
+  const [injectionText, setInjectionText] = useState('');
+  const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+
+  // Upgrade Tracking State
+  const [upgradeAvailable, setUpgradeAvailable] = useState<boolean>(false);
+  const [isUpgrading, setIsUpgrading] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkUpgrade = async () => {
+      try {
+        const res = await fetch('/api/upgrade/check');
+        const data = await res.json();
+        if (data.updatable) setUpgradeAvailable(true);
+      } catch (e) {
+        // Silently fail in detached dev environments
+      }
+    };
+    checkUpgrade();
+    const interval = setInterval(checkUpgrade, 300000); // 5 minute polling
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleApplyUpgrade = async () => {
+    setIsUpgrading(true);
+    try {
+      const res = await fetch('/api/upgrade/apply', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        window.location.reload();
+      } else {
+        alert("Upgrade failed: " + data.error);
+      }
+    } catch (e) {
+      alert("Analytic node upgrade interrupted.");
+    } finally {
+      setIsUpgrading(false);
+    }
+  };
+
+  const fetchVerbatimTranscript = async () => {
+    if (!selectedVideo) return;
+    setIsFetchingTranscript(true);
+    setTranscriptError(null);
+
+    try {
+      const response = await fetch(`/api/transcript/${selectedVideo.videoId}`);
+      const data = await response.json();
+
+      if (data.success) {
+        setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: data.transcripts } : v));
+      } else {
+        // Track the block reason
+        if (data.error?.includes("Bot Challenge") && !user) {
+          setTranscriptError("IDENTITY_VERIFICATION_REQUIRED // YouTube requested human proof.");
+          return;
+        }
+
+        // Stage 2: Gemini Research Fallback
+        console.warn("[VERBATIM_GATEWAY] Backend failed, switching to Gemini Analytic Research...");
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        
+        try {
+          const genResponse = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: `I need the verbatim transcript with timestamps for the YouTube video ${selectedVideo.videoId} (${selectedVideo.title}). 
+            Find the original transcript tracks and return them as a list of segments. 
+            Use google search to find the official transcript data if needed.`,
+            config: {
+              tools: [{ googleSearch: {} }],
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    start: { type: Type.NUMBER, description: "Start time in seconds" },
+                    duration: { type: Type.NUMBER, description: "Duration in seconds" },
+                    text: { type: Type.STRING, description: "The verbatim text" }
+                  },
+                  required: ["start", "duration", "text"]
+                }
+              }
+            }
+          });
+
+          const segments = JSON.parse(genResponse.text || "[]").map((s: any, i: number) => ({
+            ...s,
+            id: `ai-research-${selectedVideo.videoId}-${i}`,
+            isStatic: false
+          }));
+
+          if (segments.length > 0) {
+            setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: segments } : v));
+          } else {
+            setTranscriptError("Verbatim data unavailable across all nodes.");
+          }
+        } catch (aiErr) {
+          console.error("[VERBATIM_AI_ERROR]", aiErr);
+          setTranscriptError("Analytic research failed to find verified tracks.");
+        }
+      }
+    } catch (err) {
+      setTranscriptError("Network failure within the analytic pipeline.");
+    } finally {
+      setIsFetchingTranscript(false);
+    }
+  };
   
-  // Pipeline Performance & Logic Ready States
+  // Logic Ready States
   const [isPlayerReady, setIsPlayerReady] = useState(false);
-  const [activePipelineJobs, setActivePipelineJobs] = useState<Set<string>>(new Set());
 
   // Editor / EDL Mode State
   const [isEditorMode, setIsEditorMode] = useState(false);
-  const [showIntelligence, setShowIntelligence] = useState(true);
   const [showTimestamp, setShowTimestamp] = useState(true);
+  const [showIntelligence, setShowIntelligence] = useState(true);
   const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState(true);
   const [inPoint, setInPoint] = useState<number | null>(null);
   const [outPoint, setOutPoint] = useState<number | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   
   const videoRef = useRef<HTMLIFrameElement>(null);
 
@@ -75,17 +191,13 @@ export default function App() {
       const transcriptMatches = video.transcripts.filter(t => 
         t.text.toLowerCase().includes(trimmedQuery)
       );
-      const commentMatches = video.comments.filter(c => 
-        c.text.toLowerCase().includes(trimmedQuery)
-      );
       const titleMatch = video.title.toLowerCase().includes(trimmedQuery);
       
-      if (transcriptMatches.length > 0 || commentMatches.length > 0 || titleMatch) {
+      if (transcriptMatches.length > 0 || titleMatch) {
         results.push({ 
           video, 
           transcriptMatches, 
-          commentMatches,
-          score: (titleMatch ? 10 : 0) + transcriptMatches.length + commentMatches.length
+          score: (titleMatch ? 10 : 0) + transcriptMatches.length
         });
       }
     }
@@ -97,6 +209,7 @@ export default function App() {
     setIsPlayerReady(false);
     setPlayerState(-1); // Reset state on video change
     setHasStartedPlaying(false); // Reset playback flag
+    setTranscriptError(null);
   }, [selectedVideoId]);
 
   /**
@@ -192,6 +305,19 @@ export default function App() {
     };
   }, [selectedVideo.videoId, isAutoSyncEnabled]);
 
+  const inFlightIds = useRef<Set<string>>(new Set());
+
+  // Global pipeline effect to process videos that are in "checking" status
+  /**
+   * Selection Effect: Reset player state when changing source node.
+   */
+  useEffect(() => {
+    setIsPlayerReady(false);
+    setPlayerState(-1); // Reset state on video change
+    setHasStartedPlaying(false); // Reset playback flag
+  }, [selectedVideoId]);
+ 
+
   const seekTo = (seconds: number) => {
     setCurrentTime(seconds);
     if (videoRef.current?.contentWindow) {
@@ -215,96 +341,54 @@ export default function App() {
   };
 
   /**
-   * Pipeline ingestion handler with concurrent job tracking
+   * Node Ingestion Handler
+   * Creates simple analytic nodes from YouTube URLs. 
+   * Prevents duplicates by jumping to existing nodes if detected.
    */
-  const handleAddLinks = async () => {
-    if (isProcessing) return;
+  const handleAddLinks = () => {
     const urls = linksText.split(/[\s,]+/).filter(u => u.trim());
     if (urls.length === 0) return;
 
-    setIsProcessing(true);
+    const newVideos: VideoData[] = [];
+    let firstAddedId = "";
     
-    try {
-      // Parallelize processing for better throughput
-      const processPromises = urls.map(async (url) => {
-        const vid = extractVideoId(url);
-        if (!vid) return null;
+    for (const url of urls) {
+      const vid = extractVideoId(url);
+      if (!vid) continue;
 
-        try {
-          const response = await fetch('/api/process-video', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url })
-          });
-          const result = await response.json();
-          
-          const metadataContext = `Video ID: ${vid}, Title: ${result.mockData?.title || 'Unknown Video'}. Duration: ${result.mockData?.duration} seconds.`;
-          const aiResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Generate a short realistic verbatim transcript (3 main quotes with timestamps) for this video metadata: ${metadataContext}. Output ONLY a JSON array of objects with start (number, seconds), duration (number, approx 10-30s), and text (string, verbatim quote).`,
-            config: { responseMimeType: "application/json" }
-          });
-          
-          let aiTranscripts: TranscriptSegment[] = [];
-          try {
-            const text = aiResponse.text || '[]';
-            const rawTranscripts = JSON.parse(text);
-            aiTranscripts = rawTranscripts.map((t: any, idx: number) => ({
-              ...t,
-              id: `segment-${vid}-${idx}-${Math.random().toString(36).substr(2, 5)}`,
-              isStatic: t.text.toLowerCase().includes('introduction') || t.text.toLowerCase().includes('welcome')
-            }));
-          } catch (e) {
-            aiTranscripts = [{ 
-              id: `segment-${vid}-fallback`,
-              start: 0, 
-              duration: 20, 
-              text: "Welcome to this specialized session. Please follow along as we explore the core concepts.",
-              isStatic: true
-            }];
-          }
-
-          return {
-            id: Math.random().toString(36).substr(2, 9),
-            title: result.mockData?.title || `Video Import: ${vid}`,
-            videoId: vid,
-            thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-            review: result.message || "Manual ingestion successful.",
-            duration: result.mockData?.duration || 0,
-            status: 'available',
-            transcripts: aiTranscripts,
-            comments: [],
-            excludedSegmentIds: []
-          } as VideoData;
-        } catch (err) {
-          console.error('Failed to contact processing pipeline:', err);
-          return {
-            id: Math.random().toString(36).substr(2, 9),
-            title: `Video Import: ${vid}`,
-            videoId: vid,
-            thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-            review: "Backend sync failed. Local entry created.",
-            duration: 0,
-            status: 'available',
-            transcripts: [],
-            comments: []
-          } as VideoData;
-        }
-      });
-
-      const results = await Promise.all(processPromises);
-      const processedVideos = results.filter((v): v is VideoData => v !== null);
-
-      if (processedVideos.length > 0) {
-        // Prioritize new videos at the top
-        setVideos([...processedVideos, ...videos]);
-        setSelectedVideoId(processedVideos[0].id);
-        setLinksText('');
-        setIsAddPanelOpen(false);
+      // Duplicate detection: If we already have this video, prioritize selection
+      const existing = videos.find(v => v.videoId === vid);
+      if (existing) {
+        if (!firstAddedId) firstAddedId = existing.id;
+        continue;
       }
-    } finally {
-      setIsProcessing(false);
+
+      const id = `project-${Math.random().toString(36).substr(2, 9)}`;
+      const newNode: VideoData = {
+        id,
+        title: `Imported Node [${vid}]`,
+        videoId: vid,
+        thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+        duration: 0,
+        status: 'available',
+        transcripts: [],
+        excludedSegmentIds: []
+      };
+      
+      newVideos.push(newNode);
+      if (!firstAddedId) firstAddedId = id;
     }
+
+    if (newVideos.length > 0) {
+      setVideos(prev => [...newVideos, ...prev]);
+    }
+    
+    if (firstAddedId) {
+      setSelectedVideoId(firstAddedId);
+    }
+    
+    setLinksText('');
+    setIsAddPanelOpen(false);
   };
 
   const handleExportClip = async () => {
@@ -351,7 +435,7 @@ export default function App() {
             <Search className="w-3.5 h-3.5 text-slate-500 group-focus-within:text-emerald-400" />
             <input 
               type="text" 
-              placeholder="Search transcripts, comments, or timeline marks..." 
+              placeholder="Search transcripts or timeline marks..." 
               className="bg-transparent text-xs w-full outline-none text-slate-300 placeholder:text-slate-600"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -359,11 +443,44 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-6">
+          {user ? (
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end">
+                <span className="text-[8px] font-mono text-emerald-400">VERIFIED_NODE</span>
+                <span className="text-[9px] font-bold text-slate-300">{user.email?.split('@')[0]}</span>
+              </div>
+              <button 
+                onClick={logout}
+                className="w-8 h-8 rounded-full border border-emerald-500/20 overflow-hidden hover:border-emerald-500/50 transition-colors"
+                title="Logout"
+              >
+                <img src={user.photoURL || `https://ui-avatars.com/api/?name=${user.email}`} alt="User" />
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={signIn}
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 rounded text-[9px] font-black uppercase transition-all"
+            >
+              <User className="w-3 h-3" /> Connect Account
+            </button>
+          )}
+
+          {upgradeAvailable && (
+            <button 
+              onClick={handleApplyUpgrade}
+              disabled={isUpgrading}
+              className="flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded text-[10px] font-bold uppercase transition-all animate-pulse"
+            >
+              <Activity className="w-3 h-3" /> {isUpgrading ? 'Updating...' : 'Upgrade Available'}
+            </button>
+          )}
+
           <button 
             onClick={() => setIsAddPanelOpen(!isAddPanelOpen)}
             className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded text-[10px] font-bold uppercase transition-colors"
           >
-            <Plus className="w-3 h-3" /> Add Videos
+            <Plus className="w-3 h-3" /> Ingest Videos
           </button>
           
           <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-700">
@@ -485,6 +602,7 @@ export default function App() {
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedVideoId(video.id); }}
+                  aria-label={`Select video: ${video.title}`}
                   className={`w-full p-2 rounded flex gap-3 cursor-pointer transition-all border text-left group relative outline-none focus:ring-1 focus:ring-emerald-500/30 ${
                     selectedVideoId === video.id 
                     ? 'bg-slate-800 border-slate-700 shadow-lg' 
@@ -524,6 +642,8 @@ export default function App() {
                       <div className="flex items-center gap-1.5 mt-0.5">
                         {video.status === 'unavailable' ? (
                           <span className="text-[8px] font-bold text-rose-500 uppercase tracking-tighter">DATA MISSING</span>
+                        ) : video.status === 'checking' ? (
+                          <span className="text-[8px] font-bold text-emerald-500/50 uppercase tracking-tighter animate-pulse">ANALYZING...</span>
                         ) : (
                           <span className="text-[9px] text-slate-500 font-mono tracking-tighter">ID: {video.videoId.substr(0, 6)}...</span>
                         )}
@@ -628,16 +748,21 @@ export default function App() {
               )}
             </div>
 
-            {/* Analyst Review Floating Card */}
-            <div className="mt-4 w-full max-w-4xl flex gap-4 p-3 bg-slate-900/80 border border-slate-800 rounded-lg shadow-xl">
-              <div className="w-8 h-8 rounded bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-500 shrink-0">
-                <Info className="w-4 h-4" />
+            {/* Player Interface Context */}
+            <div className="mt-4 w-full max-w-4xl flex justify-between items-center px-2">
+              <div className="flex flex-col">
+                <h1 className="text-lg font-bold text-slate-200 tracking-tight">{selectedVideo.title}</h1>
+                <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
+                  <span>PEER_REF: {selectedVideo.videoId}</span>
+                  <span>•</span>
+                  <span>{formatTime(selectedVideo.duration)}</span>
+                </div>
               </div>
-              <div className="flex-1">
-                <div className="text-[9px] uppercase font-black text-slate-500 tracking-tighter mb-1">Analyst Context // Summary</div>
-                <p className="text-[11px] text-slate-300 leading-tight italic">
-                  {selectedVideo.duration === 0 ? "Establishing source metadata... Video length analysis in progress." : selectedVideo.review}
-                </p>
+              <div className="flex gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${isPlayerReady ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-800'}`} />
+                  <div className="text-[8px] font-mono text-slate-500 font-bold uppercase tracking-tighter">API_{isPlayerReady ? 'READY' : 'WAIT'}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -801,25 +926,10 @@ export default function App() {
           </div>
         </section>
 
-        {/* Right: Transcript & Comment Feed */}
+        {/* Right: Transcript Feed */}
         <aside className="w-80 border-l border-slate-800 flex flex-col bg-slate-900/50 flex-shrink-0">
-          <div className="flex h-10 border-b border-slate-800">
-            <button 
-              onClick={() => setActiveTab('transcript')}
-              className={`flex-1 text-[10px] font-bold uppercase tracking-widest transition-all ${
-                activeTab === 'transcript' ? 'bg-slate-800 text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-500 hover:text-slate-300'
-              }`}
-            >
-              Transcript
-            </button>
-            <button 
-              onClick={() => setActiveTab('comments')}
-              className={`flex-1 text-[10px] font-bold uppercase tracking-widest transition-all ${
-                activeTab === 'comments' ? 'bg-slate-800 text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-500 hover:text-slate-300'
-              }`}
-            >
-              Comments ({selectedVideo ? selectedVideo.comments.length : 0})
-            </button>
+          <div className="flex h-10 border-b border-slate-800 items-center px-4">
+            <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400">Verbatim Transcript</span>
           </div>
 
           <div className="flex-1 overflow-hidden p-3 overflow-y-auto custom-scrollbar text-center">
@@ -848,27 +958,112 @@ export default function App() {
                             <span className="text-[9px] font-mono text-emerald-500 opacity-60 group-hover:opacity-100">00:{Math.floor(t.start/60).toString().padStart(2, '0')}:{(t.start%60).toString().padStart(2, '0')}</span>
                             <span className="text-[8px] bg-slate-900 px-1 rounded text-slate-500">TRNSRC</span>
                           </div>
-                          <p className="text-[11px] leading-relaxed text-slate-400 group-hover:text-slate-200 line-clamp-2 italic">"{t.text}"</p>
+                          <p className="text-[11px] leading-relaxed text-slate-400 group-hover:text-slate-200 line-clamp-2">"{t.text}"</p>
                         </button>
                       ))}
                     </div>
                   ))}
                 </motion.div>
-              ) : activeTab === 'transcript' ? (
+              ) : (
                 <motion.div 
                   key="transcript"
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                   className="flex flex-col gap-4"
                 >
-                  {selectedVideo.transcripts.map((seg, i) => {
+                  {selectedVideo.transcripts.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-64 text-slate-600 p-8 text-center">
+                       <Database className="w-10 h-10 mb-4 opacity-20" />
+                       <p className="text-[10px] uppercase tracking-[0.2em] mb-4">Verbatim Data Vault // Empty</p>
+                       <p className="text-[9px] lowercase font-mono opacity-50 mb-6 italic">No verified transcript entries have been hardcoded for this analytical node.</p>
+                       {!isInjecting ? (
+                         <div className="flex flex-col gap-2 w-full">
+                           <button 
+                             disabled={isFetchingTranscript}
+                             onClick={fetchVerbatimTranscript}
+                             aria-label="Obtain transcript from YouTube source"
+                             className="px-4 py-2 bg-sky-500 hover:bg-sky-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 text-[10px] uppercase font-black tracking-widest rounded transition-all flex items-center justify-center gap-2"
+                           >
+                             {isFetchingTranscript ? (
+                               <>
+                                 <div className="w-3 h-3 border border-slate-950/30 border-t-slate-950 rounded-full animate-spin" />
+                                 PULLING_DATA...
+                               </>
+                             ) : (
+                               <>
+                                 <Database className="w-3 h-3" /> Pull Source Transcript
+                               </>
+                             )}
+                           </button>
+
+                           <button 
+                             onClick={() => setIsInjecting(true)}
+                             aria-label="Open verbatim injection form"
+                             className="px-4 py-2 border border-emerald-500/30 text-emerald-500 text-[10px] uppercase font-bold tracking-widest rounded hover:bg-emerald-500/10 transition-all focus:ring-1 focus:ring-emerald-500/50 outline-none"
+                           >
+                             Inject Verbatim Log
+                           </button>
+
+                           {transcriptError && (
+                             <div className="mt-4 p-3 bg-rose-500/10 border border-rose-500/20 rounded">
+                               <p className="text-[8px] text-rose-500 font-bold uppercase tracking-tighter animate-pulse mb-3">
+                                 [!] {transcriptError}
+                               </p>
+                               {transcriptError.includes("IDENTITY_VERIFICATION_REQUIRED") && !user && (
+                                 <button 
+                                   onClick={signIn}
+                                   className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-[9px] font-black uppercase rounded transition-all"
+                                 >
+                                   Verify as Human
+                                 </button>
+                               )}
+                             </div>
+                           )}
+                         </div>
+                       ) : (
+                         <motion.div 
+                           initial={{ opacity: 0, y: 10 }}
+                           animate={{ opacity: 1, y: 0 }}
+                           className="w-full bg-slate-900 border border-slate-800 p-4 rounded flex flex-col gap-3"
+                         >
+                           <header className="flex justify-between items-center">
+                             <span className="text-[8px] font-mono text-emerald-500">INIT_LOG // {formatTime(currentTime)}</span>
+                             <button onClick={() => setIsInjecting(false)} className="text-slate-500 hover:text-white" aria-label="Cancel injection"><X className="w-3 h-3" /></button>
+                           </header>
+                           <textarea 
+                             autoFocus
+                             placeholder="Capture verbatim quote..."
+                             className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-[10px] text-white focus:border-emerald-500/50 outline-none h-20 resize-none font-sans"
+                             value={injectionText}
+                             onChange={(e) => setInjectionText(e.target.value)}
+                           />
+                           <button 
+                             disabled={!injectionText.trim()}
+                             onClick={() => {
+                               const newSegment: TranscriptSegment = {
+                                 id: `manual-${Math.random().toString(36).substr(2, 9)}`,
+                                 start: currentTime,
+                                 duration: 5,
+                                 text: injectionText.trim()
+                               };
+                               setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: [...v.transcripts, newSegment].sort((a,b) => a.start - b.start) } : v));
+                               setInjectionText('');
+                               setIsInjecting(false);
+                             }}
+                             className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 rounded text-[9px] font-black uppercase transition-all shadow-lg shadow-emerald-500/10"
+                           >
+                             Verify & Commit
+                           </button>
+                         </motion.div>
+                       )}
+                    </div>
+                  ) : selectedVideo.transcripts.map((seg, i) => {
                     const isExcluded = selectedVideo.excludedSegmentIds.includes(seg.id);
                     const isActive = currentTime >= seg.start && (selectedVideo.transcripts[i+1] ? currentTime < selectedVideo.transcripts[i+1].start : true);
                     
                     return (
                       <div key={seg.id} className="relative group">
-                        <button 
-                          onClick={() => seekTo(seg.start)}
-                          className={`w-full flex flex-col gap-1 transition-all text-left p-2 rounded-r border-l-2 ${
+                        <div 
+                          className={`w-full flex flex-col gap-1 transition-all text-left p-2 rounded-r border-l-2 cursor-default ${
                             isActive
                             ? 'bg-slate-800/80 border-emerald-500' 
                             : isExcluded 
@@ -876,10 +1071,13 @@ export default function App() {
                               : 'border-transparent opacity-60 hover:opacity-100'
                           }`}
                         >
-                          <div className="flex justify-between items-baseline">
-                            <span className={`text-[10px] font-mono ${isExcluded ? 'text-slate-500 line-through' : 'text-emerald-500'}`}>
+                          <div className="flex justify-between items-baseline mb-1">
+                            <button 
+                              onClick={() => seekTo(seg.start)}
+                              className={`text-[10px] font-mono hover:underline cursor-pointer ${isExcluded ? 'text-slate-500 line-through' : 'text-emerald-500'}`}
+                            >
                               00:{Math.floor(seg.start/60).toString().padStart(2, '0')}:{(seg.start%60).toString().padStart(2, '0')}
-                            </span>
+                            </button>
                             <div className="flex items-center gap-2">
                               {seg.isStatic && (
                                 <span className="text-[7px] bg-slate-800 text-amber-500 border border-amber-500/30 px-1 rounded flex items-center gap-1">
@@ -891,12 +1089,12 @@ export default function App() {
                               )}
                             </div>
                           </div>
-                          <p className={`text-[11px] leading-relaxed italic ${
+                          <p className={`text-[11px] leading-relaxed select-text selection:bg-emerald-500/30 ${
                             isActive ? 'text-white font-medium' : isExcluded ? 'text-slate-600' : 'text-slate-400'
                           }`}>
                             "{seg.text}"
                           </p>
-                        </button>
+                        </div>
                         
                         <button 
                           onClick={(e) => { e.stopPropagation(); toggleExcludeSegment(seg.id); }}
@@ -913,38 +1111,20 @@ export default function App() {
                     );
                   })}
                 </motion.div>
-              ) : (
-                <motion.div 
-                  key="comments"
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                  className="flex flex-col gap-4"
-                >
-                  {selectedVideo.comments.map(comment => (
-                    <div key={comment.id} className="p-3 bg-slate-900 border border-slate-800 rounded">
-                      <div className="flex justify-between items-center mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center text-[8px] font-bold text-slate-300">
-                            {comment.author[0]}
-                          </div>
-                          <span className="text-[10px] font-bold text-emerald-400">{comment.author}</span>
-                        </div>
-                        <span className="text-[9px] text-slate-600 font-mono">{comment.timestamp}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 leading-relaxed italic">"{comment.text}"</p>
-                    </div>
-                  ))}
-                </motion.div>
               )}
             </AnimatePresence>
           </div>
 
-          {/* Mini Search / Filter Bar */}
+          {/* Bottom Status Branding */}
           <div className="p-3 border-t border-slate-800 bg-slate-900 flex-shrink-0">
-            <div className="flex items-center gap-2 text-[9px] text-slate-400 flex-wrap">
-              <span className="uppercase font-bold tracking-tighter">Filtered_Mode:</span>
-              <span className="bg-slate-800 px-1 rounded border border-slate-700">DEBUG</span>
-              <span className="bg-slate-800 px-1 rounded border border-slate-700">UI/UX</span>
-              <span className="bg-emerald-950 text-emerald-400 px-1 rounded border border-emerald-500/50 underline cursor-pointer">INSIGHTS</span>
+            <div className="flex flex-col gap-2 text-[9px] text-slate-400">
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="uppercase font-bold tracking-[0.2em] italic">Verbatim Mode Active</span>
+              </div>
+              <p className="text-[8px] leading-relaxed text-slate-600 uppercase tracking-tighter">
+                Faux-transcription disabled. Use 'Inject Verbatim' to add verified data.
+              </p>
             </div>
           </div>
         </aside>

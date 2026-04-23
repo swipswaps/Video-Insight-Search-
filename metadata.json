@@ -1,6 +1,6 @@
 {
   "name": "Video Insight Search",
-  "description": "A powerful video discovery tool with transcript-based search, timeline scrubbing, and AI-driven content reviews.",
+  "description": "Verbatim video discovery tool with official transcript retrieval, timeline scrubbing, and manual data injection for precise analysis.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

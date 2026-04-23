@@ -49,77 +49,46 @@ export interface VideoData {
   videoId: string;
   /** High-resolution image URL */
   thumbnail: string;
-  /** AI-generated analytical summary */
-  review: string;
   /** Total duration in seconds */
   duration: number;
   /** Operating status */
   status: VideoStatus;
   /** Complete transcript timeline */
   transcripts: TranscriptSegment[];
-  /** Aggregate community feedback */
-  comments: VideoComment[];
   /** IDs of segments to omit from playback/export (The EDL) */
   excludedSegmentIds: string[];
 }
 
-/**
- * Initial seed data for the application's VID project library.
- * Features selected historical, marketing, and technical nodes for demo purposes.
- */
 export const MOCK_VIDEOS: VideoData[] = [
   {
-    id: "1",
-    title: "Alternative Heating & Supplies: How a Wood Boiler Works",
+    id: "wood-boiler-node",
+    title: "Wood Boiler Ingestion Connection",
     videoId: "f-Yh5L4fT8E",
     thumbnail: "https://img.youtube.com/vi/f-Yh5L4fT8E/hqdefault.jpg",
-    review: "A detailed analysis of wood boiler operation and water chemistry requirements for long-term maintenance.",
     duration: 328,
     status: 'available',
-    transcripts: [
-      { id: "s1-1", isStatic: true, start: 0, duration: 15, text: "Welcome to Alternative Heating and Supplies. I'm Jeff. Today we're going to talk about wood boiler water treatment." },
-      { id: "s1-2", start: 30, duration: 25, text: "Why do we need water treatment? Because your wood boiler is made of steel, and steel likes to rust when exposed to oxygen and water." },
-      { id: "s1-3", start: 75, duration: 20, text: "The closed loop system needs a chemical scavenger to remove that oxygen and protect the heat exchangers." }
-    ],
-    comments: [
-      { id: "c1", author: "HistoryBuff", text: "The transition to digital archives was handled expertly here.", timestamp: "2 days ago" }
-    ],
+    transcripts: [],
     excludedSegmentIds: []
   },
   {
-    id: "2",
-    title: "Infrastructure and Growth in a Developing City",
+    id: "wattmeter-node",
+    title: "Energy Check Pipeline",
     videoId: "L6RfIUUhgLs",
     thumbnail: "https://img.youtube.com/vi/L6RfIUUhgLs/hqdefault.jpg",
-    review: "Evaluation of urban expansion and the critical role of resource management in 21st-century cities.",
-    duration: 262,
+    duration: 207,
     status: 'available',
-    transcripts: [
-      { id: "s2-1", start: 0, duration: 20, text: "Urbanization is a central theme of the 21st century. It's not just about people moving to cities, it's about how those cities adapt." },
-      { id: "s2-2", isStatic: true, start: 30, duration: 25, text: "Sustainable urbanization requires a shift from linear to circular systems in both physical infrastructure and digital management." },
-      { id: "s2-3", start: 60, duration: 25, text: "By the year 2050, it is estimated that two-thirds of the world's population will live in urban areas." }
-    ],
-    comments: [
-      { id: "c3", author: "CreativeLead", text: "The color contrast is significantly higher in this version.", timestamp: "5 hours ago" }
-    ],
+    transcripts: [],
     excludedSegmentIds: []
   },
   {
-    id: "3",
-    title: "Why the World's Best Brand is Not a Brand",
+    id: "brand-logic-node",
+    title: "Brand Theory Analytic",
     videoId: "BDlHx6NJx7I",
     thumbnail: "https://img.youtube.com/vi/BDlHx6NJx7I/hqdefault.jpg",
-    review: "A strategic overview of brand authenticity and building long-term consumer trust through values.",
     duration: 180,
     status: 'available',
-    transcripts: [
-      { id: "s3-1", start: 0, duration: 15, text: "A brand is not what you say it is. It is what they say it is." },
-      { id: "s3-2", start: 30, duration: 20, text: "Your brand is a promise you make to your customers. If you break that promise, you lose the brand." },
-      { id: "s3-3", start: 60, duration: 25, text: "Great brands are built on authenticity and a deep understanding of the human condition." }
-    ],
-    comments: [
-      { id: "c4", author: "DevOps_Dan", text: "The segment at 3:19 is exactly what I was looking for.", timestamp: "1 week ago" }
-    ],
+    transcripts: [],
     excludedSegmentIds: []
   }
 ];
+
