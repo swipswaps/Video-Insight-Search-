@@ -94,23 +94,27 @@ export default function App() {
     setTranscriptError(null);
 
     try {
-      // STAGE 1: Server-side Extraction
-      const response = await fetch(`/api/transcript/${selectedVideo.videoId}`);
+      // STAGE 1: Recursive Environment Probe (RLM Paradigm)
+      // Instead of a simple fetch, we initiate a 'Recursive Synthesis' call.
+      const response = await fetch('/api/recursive-extraction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId: selectedVideo.videoId, depth: 0 })
+      });
       const data = await response.json();
 
       if (data.success) {
-        // Success: Update the video object with the verbatim track.
-        setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: data.transcripts } : v));
+        // Success: Commit the synthesized verbatim segments to the data vault.
+        setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: data.segments } : v));
       } else {
-        // STAGE 2: Bot Challenge Detection
-        // If the backend detected a bot block, we verify if the user is authenticated.
-        // A 'Verified Session' is usually enough to bypass these challenges.
-        if (data.error?.includes("Bot Challenge") && !user) {
-          setTranscriptError("IDENTITY_VERIFICATION_REQUIRED // YouTube requested human proof.");
+        // STAGE 2: Bot Challenge Detection (Recursive Escalation)
+        // If the recursive logic hits a heuristic wall, we prompt for Human Proof.
+        if (data.error === "IDENTITY_VERIFICATION_REQUIRED" && !user) {
+          setTranscriptError("RECURSIVE_BLOCK_DETECTED // Identity proof required to verify this environment.");
           return;
         }
 
-        // STAGE 3: Gemini Research Fallback
+        // STAGE 3: Gemini Deep-Analytic Research
         // If technical extraction fails, we use Gemini 3's search capabilities to find
         // transcribed data available in public archives or official video metadata.
         console.warn("[VERBATIM_GATEWAY] Backend failed, switching to Gemini Analytic Research...");
