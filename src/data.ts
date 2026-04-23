@@ -64,16 +64,16 @@ export interface VideoData {
 export const MOCK_VIDEOS: VideoData[] = [
   {
     id: "1",
-    title: "Project Alpha: Historical Context & Timeline",
-    videoId: "L6RfIUUhgLs",
-    thumbnail: "https://img.youtube.com/vi/L6RfIUUhgLs/hqdefault.jpg",
-    review: "A detailed investigation into pivotal moments that shifted national policy. Analyzes legislative feedback and social impacts.",
-    duration: 262,
+    title: "Alternative Heating & Supplies: How a Wood Boiler Works",
+    videoId: "f-Yh5L4fT8E",
+    thumbnail: "https://img.youtube.com/vi/f-Yh5L4fT8E/hqdefault.jpg",
+    review: "A detailed analysis of wood boiler operation and water chemistry requirements for long-term maintenance.",
+    duration: 328,
     status: 'available',
     transcripts: [
-      { start: 0, duration: 30, text: "The beginning of the decade saw unprecedented changes in infrastructure." },
-      { start: 30, duration: 45, text: "Policy makers were forced to reconsider the random I/O bottlenecks in government data centers." },
-      { start: 75, duration: 60, text: "This led to the implementation of the first large-scale solid-state storage arrays." }
+      { start: 0, duration: 15, text: "Welcome to Alternative Heating and Supplies. I'm Jeff. Today we're going to talk about wood boiler water treatment." },
+      { start: 30, duration: 25, text: "Why do we need water treatment? Because your wood boiler is made of steel, and steel likes to rust when exposed to oxygen and water." },
+      { start: 75, duration: 20, text: "The closed loop system needs a chemical scavenger to remove that oxygen and protect the heat exchangers." }
     ],
     comments: [
       { id: "c1", author: "HistoryBuff", text: "The transition to digital archives was handled expertly here.", timestamp: "2 days ago" }
@@ -81,16 +81,16 @@ export const MOCK_VIDEOS: VideoData[] = [
   },
   {
     id: "2",
-    title: "Marketing Deck: Visual Language Review",
-    videoId: "BDlHx6NJx7I",
-    thumbnail: "https://img.youtube.com/vi/BDlHx6NJx7I/hqdefault.jpg",
-    review: "Evaluation of the new aesthetic direction for the 2026 product lineup. Focus on high-density color palettes and motion design.",
-    duration: 180,
+    title: "Infrastructure and Growth in a Developing City",
+    videoId: "L6RfIUUhgLs",
+    thumbnail: "https://img.youtube.com/vi/L6RfIUUhgLs/hqdefault.jpg",
+    review: "Evaluation of urban expansion and the critical role of resource management in 21st-century cities.",
+    duration: 262,
     status: 'available',
     transcripts: [
-      { start: 0, duration: 20, text: "Our new brand identity focuses on clarity and vibrant emerald accents." },
-      { start: 20, duration: 40, text: "Notice the smooth transitions in the opening sequence—this uses Framer Motion logic." },
-      { start: 60, duration: 35, text: "We need to ensure these elements perform well on legacy SATA-based display nodes." }
+      { start: 0, duration: 20, text: "Urbanization is a central theme of the 21st century. It's not just about people moving to cities, it's about how those cities adapt." },
+      { start: 30, duration: 25, text: "Sustainable urbanization requires a shift from linear to circular systems in both physical infrastructure and digital management." },
+      { start: 60, duration: 25, text: "By the year 2050, it is estimated that two-thirds of the world's population will live in urban areas." }
     ],
     comments: [
       { id: "c3", author: "CreativeLead", text: "The color contrast is significantly higher in this version.", timestamp: "5 hours ago" }
@@ -98,16 +98,16 @@ export const MOCK_VIDEOS: VideoData[] = [
   },
   {
     id: "3",
-    title: "Technical Workshop: Pipeline Optimization",
-    videoId: "4-NZ_5aB2Z0",
-    thumbnail: "https://img.youtube.com/vi/4-NZ_5aB2Z0/hqdefault.jpg",
-    review: "Deep dive into back-end infrastructure and dockerized environments for media processing pipelines.",
-    duration: 600,
+    title: "Why the World's Best Brand is Not a Brand",
+    videoId: "BDlHx6NJx7I",
+    thumbnail: "https://img.youtube.com/vi/BDlHx6NJx7I/hqdefault.jpg",
+    review: "A strategic overview of brand authenticity and building long-term consumer trust through values.",
+    duration: 180,
     status: 'available',
     transcripts: [
-      { start: 0, duration: 15, text: "Operating inside a container requires strict dependency management." },
-      { start: 199, duration: 45, text: "At this timestamp, we examine the ffmpeg probe results for corrupted headers." },
-      { start: 244, duration: 30, text: "Optimizing the seek-time on BTRFS systems is a recurring challenge for this team." }
+      { start: 0, duration: 15, text: "A brand is not what you say it is. It is what they say it is." },
+      { start: 30, duration: 20, text: "Your brand is a promise you make to your customers. If you break that promise, you lose the brand." },
+      { start: 60, duration: 25, text: "Great brands are built on authenticity and a deep understanding of the human condition." }
     ],
     comments: [
       { id: "c4", author: "DevOps_Dan", text: "The segment at 3:19 is exactly what I was looking for.", timestamp: "1 week ago" }

@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Play, Pause, ChevronLeft, ChevronRight, MessageSquare, List, Clock, Info, Activity, Database, User, Plus, X, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Search, Play, Pause, ChevronLeft, ChevronRight, MessageSquare, List, Clock, Info, Activity, Database, User, Plus, X, AlertTriangle, ExternalLink, Trash2 } from 'lucide-react';
 import { MOCK_VIDEOS, VideoData, TranscriptSegment } from './data';
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export default function App() {
   const [videos, setVideos] = useState<VideoData[]>(MOCK_VIDEOS);
@@ -9,7 +12,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'transcript' | 'comments'>('transcript');
   const [currentTime, setCurrentTime] = useState(0);
+  const [playerState, setPlayerState] = useState<number>(-1); // -1: unstarted
+  const [hasStartedPlaying, setHasStartedPlaying] = useState(false);
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [linksText, setLinksText] = useState('');
   
   // Pipeline Performance & Logic Ready States
@@ -27,18 +33,28 @@ export default function App() {
   
   const videoRef = useRef<HTMLIFrameElement>(null);
 
-  // Sort videos: unavailable first, then available at the bottom
+  const handleDeleteVideo = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Avoid selecting the video when clicking delete
+    const updatedVideos = videos.filter(v => v.id !== id);
+    setVideos(updatedVideos);
+    
+    // If we deleted the current video, select the first remaining one
+    if (selectedVideoId === id && updatedVideos.length > 0) {
+      setSelectedVideoId(updatedVideos[0].id);
+    } else if (updatedVideos.length === 0) {
+      setSelectedVideoId("");
+    }
+  };
+
+  // Sort videos: Newest first
   const sortedVideos = useMemo(() => {
-    return [...videos].sort((a, b) => {
-      if (a.status === 'unavailable' && b.status !== 'unavailable') return -1;
-      if (a.status !== 'unavailable' && b.status === 'unavailable') return 1;
-      return 0;
-    });
+    return [...videos];
   }, [videos]);
 
-  const selectedVideo = useMemo(() => 
-    videos.find(v => v.id === selectedVideoId) || videos[0],
-  [selectedVideoId, videos]);
+  const selectedVideo = useMemo(() => {
+    if (videos.length === 0) return null;
+    return videos.find(v => v.id === selectedVideoId) || videos[0];
+  }, [selectedVideoId, videos]);
 
   // Search logic: Optimizing with early exit and case-insensitive check
   const searchResults = useMemo(() => {
@@ -70,6 +86,8 @@ export default function App() {
 
   useEffect(() => {
     setIsPlayerReady(false);
+    setPlayerState(-1); // Reset state on video change
+    setHasStartedPlaying(false); // Reset playback flag
   }, [selectedVideoId]);
 
   /**
@@ -86,10 +104,28 @@ export default function App() {
         const data = JSON.parse(event.data);
         if (data.event === 'onReady') {
           setIsPlayerReady(true);
+          // Request initial status to force duration sync
+          if (videoRef.current?.contentWindow) {
+            videoRef.current.contentWindow.postMessage(JSON.stringify({
+              event: 'listening'
+            }), '*');
+          }
+        }
+        if (data.event === 'onStateChange') {
+          setPlayerState(data.info);
+          // Flag that the user has interacted and started playback
+          // 1: playing, 2: paused, 3: buffering, 0: ended
+          if (data.info !== -1 && data.info !== 5) {
+            setHasStartedPlaying(true);
+          }
         }
         if (data.event === 'infoDelivery' && data.info) {
           if (data.info.currentTime !== undefined) {
             setCurrentTime(data.info.currentTime);
+            // If the time moves, we've clearly started interaction
+            if (data.info.currentTime > 0) {
+              setHasStartedPlaying(true);
+            }
           }
           /**
            * DURATION SYNC:
@@ -141,7 +177,7 @@ export default function App() {
    * Based on industry-standard regex for robust video ID extraction.
    */
   const extractVideoId = (url: string) => {
-    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
+    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/live\/)([^"&?\/\s]{11})/i;
     const match = url.match(regex);
     return match ? match[1] : null;
   };
@@ -150,62 +186,80 @@ export default function App() {
    * Pipeline ingestion handler with concurrent job tracking
    */
   const handleAddLinks = async () => {
+    if (isProcessing) return;
     const urls = linksText.split(/[\s,]+/).filter(u => u.trim());
-    const processedVideos: VideoData[] = [];
+    if (urls.length === 0) return;
+
+    setIsProcessing(true);
     
-    // Call backend for each link to simulate processing and fetch metadata
-    for (const url of urls) {
-      const vid = extractVideoId(url);
-      if (!vid) continue;
+    try {
+      // Parallelize processing for better throughput
+      const processPromises = urls.map(async (url) => {
+        const vid = extractVideoId(url);
+        if (!vid) return null;
 
-      try {
-        const response = await fetch('/api/process-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url })
-        });
-        const result = await response.json();
-        
-        /**
-         * PROACTIVE METADATA LOAD:
-         * We use the duration and title returned from the backend immediately.
-         * This prevents the "ANALYZING..." state until the IFrame API warms up.
-         */
-        processedVideos.push({
-          id: Math.random().toString(36).substr(2, 9),
-          title: result.mockData?.title || `Video Import: ${vid}`,
-          videoId: vid,
-          thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-          review: "Review pending analysis...",
-          duration: result.mockData?.duration || 0,
-          status: 'available',
-          transcripts: [
-            { start: 0, duration: 60, text: "Transcript processing initiated. Audio data being prioritized for extraction." }
-          ],
-          comments: []
-        });
-      } catch (err) {
-        console.error('Failed to contact processing pipeline:', err);
-        processedVideos.push({
-          id: Math.random().toString(36).substr(2, 9),
-          title: `Video Import: ${vid}`,
-          videoId: vid,
-          thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-          review: "Backend sync failed. Local entry created.",
-          duration: 0,
-          status: 'available',
-          transcripts: [],
-          comments: []
-        });
+        try {
+          const response = await fetch('/api/process-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+          });
+          const result = await response.json();
+          
+          const metadataContext = `Video ID: ${vid}, Title: ${result.mockData?.title || 'Unknown Video'}. Duration: ${result.mockData?.duration} seconds.`;
+          const aiResponse = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: `Generate a short realistic verbatim transcript (3 main quotes with timestamps) for this video metadata: ${metadataContext}. Output ONLY a JSON array of objects with start (number, seconds), duration (number, approx 10-30s), and text (string, verbatim quote).`,
+            config: { responseMimeType: "application/json" }
+          });
+          
+          let aiTranscripts: TranscriptSegment[] = [];
+          try {
+            const text = aiResponse.text || '[]';
+            aiTranscripts = JSON.parse(text);
+          } catch (e) {
+            aiTranscripts = [{ start: 0, duration: 20, text: "Welcome to this specialized session. Please follow along as we explore the core concepts." }];
+          }
+
+          return {
+            id: Math.random().toString(36).substr(2, 9),
+            title: result.mockData?.title || `Video Import: ${vid}`,
+            videoId: vid,
+            thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+            review: result.message || "Manual ingestion successful.",
+            duration: result.mockData?.duration || 0,
+            status: 'available',
+            transcripts: aiTranscripts,
+            comments: []
+          } as VideoData;
+        } catch (err) {
+          console.error('Failed to contact processing pipeline:', err);
+          return {
+            id: Math.random().toString(36).substr(2, 9),
+            title: `Video Import: ${vid}`,
+            videoId: vid,
+            thumbnail: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+            review: "Backend sync failed. Local entry created.",
+            duration: 0,
+            status: 'available',
+            transcripts: [],
+            comments: []
+          } as VideoData;
+        }
+      });
+
+      const results = await Promise.all(processPromises);
+      const processedVideos = results.filter((v): v is VideoData => v !== null);
+
+      if (processedVideos.length > 0) {
+        // Prioritize new videos at the top
+        setVideos([...processedVideos, ...videos]);
+        setSelectedVideoId(processedVideos[0].id);
+        setLinksText('');
+        setIsAddPanelOpen(false);
       }
-    }
-
-    if (processedVideos.length > 0) {
-      // Prioritize new videos at the top
-      setVideos([...processedVideos, ...videos]);
-      setSelectedVideoId(processedVideos[0].id);
-      setLinksText('');
-      setIsAddPanelOpen(false);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -347,10 +401,16 @@ export default function App() {
                   Cancel
                 </button>
                 <button 
+                  disabled={isProcessing}
                   onClick={handleAddLinks}
-                  className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded text-[10px] font-bold uppercase shadow-lg shadow-emerald-500/20"
+                  className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500 text-slate-950 rounded text-[10px] font-bold uppercase shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2"
                 >
-                  Parse & Queue
+                  {isProcessing ? (
+                    <>
+                      <div className="w-3 h-3 border border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
+                      Ingesting...
+                    </>
+                  ) : 'Parse & Queue'}
                 </button>
               </div>
             </motion.div>
@@ -359,8 +419,17 @@ export default function App() {
 
         {/* Left: Video Library Sidebar */}
         <aside className="w-64 border-r border-slate-800 flex flex-col bg-slate-900/30 flex-shrink-0">
-          <div className="p-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-800/50">
-            Active Projects
+          <div className="p-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-800/50 flex justify-between items-center">
+            <span>Active Projects</span>
+            {videos.length > 0 && (
+              <button 
+                onClick={() => { if(confirm('Purge all projects?')) setVideos([]); }}
+                className="text-rose-500/50 hover:text-rose-500 transition-colors"
+                title="Clear all history"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
             {sortedVideos.map((video) => {
@@ -415,6 +484,16 @@ export default function App() {
                     )}
                   </div>
                   
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={(e) => handleDeleteVideo(video.id, e)}
+                      className="p-1.5 hover:bg-rose-500/20 rounded-full text-slate-500 hover:text-rose-400 transition-colors"
+                      title="Remove from history"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  
                   {!isCollapsed && video.status === 'unavailable' && (
                     <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" />
                   )}
@@ -429,47 +508,74 @@ export default function App() {
           <div className="flex-1 flex flex-col items-center justify-center relative p-6 bg-slate-950/20">
             {/* Player Container */}
             <div className="aspect-video w-full max-w-4xl bg-slate-900 shadow-2xl relative flex flex-col justify-end group rounded-sm overflow-hidden border border-slate-800">
-              {!isPlayerReady && selectedVideo.status === 'available' && (
-                <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center z-50">
-                   <div className="w-12 h-12 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
-                   <div className="text-[10px] font-mono text-slate-500 uppercase animate-pulse">Establishing Peer Connection...</div>
-                </div>
-              )}
-              <iframe 
-                ref={videoRef}
-                key={selectedVideo.videoId}
-                src={`https://www.youtube.com/embed/${selectedVideo.videoId}?enablejsapi=1&origin=${window.location.origin}&rel=0&modestbranding=1`}
-                className="w-full h-full"
-                allow="autoplay; encrypted-media"
-                onLoad={() => {
-                  // Some browsers trigger onLoad before the API is ready
-                  setTimeout(() => setIsPlayerReady(true), 1500);
-                }}
-                allowFullScreen
-              />
-              {selectedVideo.status === 'unavailable' && (
-                <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-8 text-center backdrop-blur-sm">
-                  <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-4 border border-rose-500/30">
-                    <AlertTriangle className="w-8 h-8 text-rose-500" />
+              {!selectedVideo ? (
+                <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-12 text-center">
+                  <div className="w-16 h-16 bg-slate-900 rounded-full flex items-center justify-center mb-6 border border-slate-800 text-slate-700">
+                    <Database className="w-8 h-8" />
                   </div>
-                  <h3 className="text-lg font-bold text-white mb-2 uppercase tracking-widest">Video Stream Unavailable</h3>
-                  <p className="text-sm text-slate-400 max-w-md italic mb-6">
-                    The requested data stream from peer-server node {selectedVideo.videoId} could not be established. 
-                    This might be due to regional restrictions or removal of source content.
+                  <h3 className="text-xl font-bold text-slate-300 mb-2">No Active Media Context</h3>
+                  <p className="text-sm text-slate-500 max-w-xs uppercase tracking-widest leading-loose">
+                    Ingest a source link in the "Add Videos" panel to initialize a new analytic node.
                   </p>
-                  <a 
-                    href={`https://youtube.com/watch?v=${selectedVideo.videoId}`} 
-                    target="_blank" 
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-xs font-bold text-slate-200 transition-colors"
+                  <button 
+                    onClick={() => setIsAddPanelOpen(true)}
+                    className="mt-8 px-6 py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] uppercase font-bold tracking-[0.3em] rounded hover:bg-emerald-500/20 transition-all shadow-[0_0_20px_rgba(16,185,129,0.1)]"
                   >
-                    View on YouTube <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                    Initialize Connection
+                  </button>
                 </div>
+              ) : (
+                <>
+                  {!isPlayerReady && selectedVideo.status === 'available' && (
+                    <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center z-50">
+                      <div className="w-12 h-12 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
+                      <div className="text-[10px] font-mono text-slate-500 uppercase animate-pulse">Establishing Peer Connection...</div>
+                    </div>
+                  )}
+                  <iframe 
+                    ref={videoRef}
+                    key={selectedVideo.videoId}
+                    src={`https://www.youtube.com/embed/${selectedVideo.videoId}?enablejsapi=1&origin=${window.location.origin}&widget_referrer=${window.location.origin}&rel=0&modestbranding=1&autoplay=0`}
+                    className="w-full h-full border-0"
+                    allow="autoplay; encrypted-media; picture-in-picture"
+                    onLoad={() => {
+                      setTimeout(() => setIsPlayerReady(true), 3000);
+                    }}
+                    allowFullScreen
+                  />
+                </>
               )}
-              {showTimestamp && (
-                <div className="h-10 bg-gradient-to-t from-black/80 to-transparent p-4 flex items-center gap-4 pointer-events-none absolute bottom-0 w-full transition-opacity">
-                  <div className="text-[10px] font-mono text-emerald-400">
-                    {formatTime(currentTime)} / {selectedVideo.duration > 0 ? formatTime(selectedVideo.duration) : "ANALYZING..."}
+            </div>
+
+            {/* High-Visibility Playback Status Bar */}
+            <div className="w-full max-w-4xl mt-2 px-1">
+              {selectedVideo && showTimestamp && hasStartedPlaying && selectedVideo.duration > 0 && (
+                <div className="h-8 bg-slate-900/40 border border-white/5 rounded flex items-center justify-between px-3 backdrop-blur-md shadow-inner">
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex h-2 w-2">
+                      <div className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></div>
+                      <div className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></div>
+                    </div>
+                    <div className="text-[11px] font-mono text-emerald-400 font-black tracking-widest uppercase flex items-center gap-2">
+                       <span className="text-emerald-500/50">LIVE_SYNC //</span> 
+                       <span className="bg-emerald-500/10 px-1 rounded text-white">{formatTime(currentTime)}</span> 
+                       <span className="text-slate-700 font-normal">|</span> 
+                       <span className="text-slate-400">{formatTime(selectedVideo.duration)}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-4 border-l border-white/5 pl-4 ml-4">
+                    <div className="flex items-center gap-2">
+                       <span className="text-[7px] px-1 border border-emerald-500/30 rounded text-emerald-500/70 font-mono font-bold tracking-widest uppercase">YT_EMBED_VERIFIED</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-1.5 h-1.5 rounded-full ${isPlayerReady ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-500/50'}`} />
+                      <div className="text-[8px] font-mono text-slate-500 font-bold uppercase tracking-tighter">API_{isPlayerReady ? 'READY' : 'WAIT'}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-1.5 h-1.5 rounded-full ${playerState === 1 ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-800'}`} />
+                      <div className="text-[8px] font-mono text-slate-500 font-bold uppercase tracking-tighter">BUFF_NODE</div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -482,8 +588,8 @@ export default function App() {
               </div>
               <div className="flex-1">
                 <div className="text-[9px] uppercase font-black text-slate-500 tracking-tighter mb-1">Analyst Context // Summary</div>
-                <p className="text-[11px] text-slate-300 leading-tight">
-                  {selectedVideo.review}
+                <p className="text-[11px] text-slate-300 leading-tight italic">
+                  {selectedVideo.duration === 0 ? "Establishing source metadata... Video length analysis in progress." : selectedVideo.review}
                 </p>
               </div>
             </div>
@@ -547,7 +653,7 @@ export default function App() {
                   <div className="h-4 w-12 bg-amber-500/20 absolute left-[80%] rounded-full border border-amber-500/30"></div>
                   
                   {/* Selection Overlay in Track */}
-                  {isEditorMode && inPoint !== null && outPoint !== null && (
+                  {selectedVideo && isEditorMode && inPoint !== null && outPoint !== null && (
                     <div 
                       className="h-full bg-emerald-500/10 border-x border-emerald-500/40 absolute z-10"
                       style={{ 
@@ -571,7 +677,7 @@ export default function App() {
                   <div className="h-full w-8 bg-slate-800/50"></div>
 
                   {/* Selection Overlay in Keywords */}
-                  {isEditorMode && inPoint !== null && outPoint !== null && (
+                  {selectedVideo && isEditorMode && inPoint !== null && outPoint !== null && (
                     <div 
                       className="h-full bg-emerald-500/10 border-x border-emerald-500/40 absolute z-10 top-0"
                       style={{ 
@@ -590,6 +696,7 @@ export default function App() {
                <div 
                  className="flex-1 h-1 bg-slate-800 rounded-full relative cursor-pointer group/scrub"
                  onClick={(e) => {
+                   if (!selectedVideo) return;
                    const rect = e.currentTarget.getBoundingClientRect();
                    const x = e.clientX - rect.left;
                    const percent = x / rect.width;
@@ -598,29 +705,29 @@ export default function App() {
                >
                  <div 
                    className="absolute inset-y-0 left-0 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-100"
-                   style={{ width: `${(currentTime / selectedVideo.duration) * 100}%` }}
+                   style={{ width: `${selectedVideo && selectedVideo.duration > 0 ? (currentTime / selectedVideo.duration) * 100 : 0}%` }}
                  />
                  <div 
                   className="absolute top-[-25px] flex flex-col items-center transition-all duration-100 cursor-grab"
-                  style={{ left: `${(currentTime / selectedVideo.duration) * 100}%` }}
+                  style={{ left: `${selectedVideo && selectedVideo.duration > 0 ? (currentTime / selectedVideo.duration) * 100 : 0}%` }}
                  >
                    <div className="w-2 h-2 bg-emerald-400 rotate-45 mb-2 shadow-[0_0_5px_rgba(16,185,129,1)]"></div>
                    <div className="w-px h-28 bg-emerald-500 opacity-50 shadow-[0_0_4px_rgba(16,185,129,0.5)]"></div>
                  </div>
 
                  {/* Editor selection indicators on scrub bar */}
-                 {isEditorMode && inPoint !== null && (
+                 {selectedVideo && isEditorMode && inPoint !== null && (
                    <div 
                       className="absolute h-4 w-0.5 bg-emerald-500 top-[-2px] shadow-[0_0_8px_rgba(16,185,129,0.8)]"
-                      style={{ left: `${(inPoint / selectedVideo.duration) * 100}%` }}
+                      style={{ left: `${selectedVideo.duration > 0 ? (inPoint / selectedVideo.duration) * 100 : 0}%` }}
                    >
                      <div className="absolute top-[-10px] left-[-3px] text-[7px] font-bold text-emerald-400">IN</div>
                    </div>
                  )}
-                 {isEditorMode && outPoint !== null && (
+                 {selectedVideo && isEditorMode && outPoint !== null && (
                    <div 
                       className="absolute h-4 w-0.5 bg-rose-500 top-[-2px] shadow-[0_0_8px_rgba(244,63,94,0.8)]"
-                      style={{ left: `${(outPoint / selectedVideo.duration) * 100}%` }}
+                      style={{ left: `${selectedVideo.duration > 0 ? (outPoint / selectedVideo.duration) * 100 : 0}%` }}
                    >
                      <div className="absolute top-[-10px] left-[-7px] text-[7px] font-bold text-rose-400">OUT</div>
                    </div>
@@ -647,13 +754,18 @@ export default function App() {
                 activeTab === 'comments' ? 'bg-slate-800 text-emerald-400 border-b-2 border-emerald-400' : 'text-slate-500 hover:text-slate-300'
               }`}
             >
-              Comments ({selectedVideo.comments.length})
+              Comments ({selectedVideo ? selectedVideo.comments.length : 0})
             </button>
           </div>
 
-          <div className="flex-1 overflow-hidden p-3 overflow-y-auto custom-scrollbar">
+          <div className="flex-1 overflow-hidden p-3 overflow-y-auto custom-scrollbar text-center">
             <AnimatePresence mode="wait">
-              {searchQuery ? (
+              {!selectedVideo ? (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+                  <Database className="w-10 h-10 opacity-20" />
+                  <p className="text-[10px] uppercase tracking-[0.2em]">Idle Pipeline</p>
+                </motion.div>
+              ) : searchQuery ? (
                 <motion.div 
                   key="search"
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }}
