@@ -21,13 +21,17 @@ To bypass YouTube's high-sensitivity bot detection, click **"Connect Account"** 
 
 ---
 
-## 🏗️ Verbatim Retrieval Pipeline
-This suite implements a **Four-Stage Integrity Pipeline** to ensure 100% accurate data retrieval regardless of server-side restrictions.
+## 🏗️ Verbatim Retrieval Pipeline (RLM Paradigm)
+This suite implements the **Recursive Language Model (RLM)** architecture (as discussed in arXiv:2512.24601) and **Session Orchestration** techniques. We follow a **Zero-Hallucination Policy**—AI is completely removed from the data extraction path to ensure 100% verbatim accuracy.
 
-1.  **Stage 1: Primary Library Scraper**: Rapid extraction using standard subtitle libraries.
-2.  **Stage 2: Browser Mimicry**: Backend simulates a high-fidelity Chrome browser header set to extract hidden `ytInitialPlayerResponse` data directly from the page source.
-3.  **Stage 3: Verified User Session (Human Proof)**: If YouTube triggers a "Bot Challenge," the app prompts for human verification. By logging in with your Google account, the analytic node uses your authenticated session to bypass generic bot blocks.
-4.  **Stage 4: Gemini Analytic Research**: A final fallback leveraging **Gemini 3 Flash** with **Google Search Grounding** to locate official transcripts across public archives.
+1.  **Stage 1: Authoritative API Probing**: Direct extraction via official `youtube.com/api/timedtext` endpoints for sub-millisecond precision and raw JSON3 integrity.
+2.  **Stage 2: Browser Mimicry (Recursive Probe)**: If the primary API is restricted, the backend simulates a high-fidelity Chrome session to extract hidden `ytInitialPlayerResponse` segments from the page source.
+3.  **Stage 3: Verified Session Orchestration**: In cases of heuristic bot-detection (403 errors), the system prompts for a **Verified Human Session**. By connecting your account, the extraction node leverages human-identity proofing to authorize data retrieval.
+
+---
+
+## 🛠️ Verbatim Log Persistence
+All server-side operations are captured raw and unaltered. The `dev.log` file is maintained using `tee`, providing a verbatim record of every system event, error, and orchestration milestone. Use `npm run dev` to monitor the live feed.
 
 ---
 

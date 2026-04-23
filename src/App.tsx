@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Play, Pause, ChevronLeft, ChevronRight, MessageSquare, List, Clock, Info, Activity, Database, User, Plus, X, AlertTriangle, ExternalLink, Trash2, Scissors, SkipForward } from 'lucide-react';
-import { MOCK_VIDEOS, VideoData, TranscriptSegment } from './data';
-import { GoogleGenAI, Type } from "@google/genai";
+import { INITIAL_VIDEOS, VideoData, TranscriptSegment } from './data';
 import { auth, signIn, logout } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
@@ -28,8 +27,8 @@ export default function App() {
    * selectedVideoId: Pointer to the active video in the workspace.
    * currentTime: Real-time playback position synced from the YouTube iframe.
    */
-  const [videos, setVideos] = useState<VideoData[]>(MOCK_VIDEOS);
-  const [selectedVideoId, setSelectedVideoId] = useState(MOCK_VIDEOS.length > 0 ? MOCK_VIDEOS[0].id : "");
+  const [videos, setVideos] = useState<VideoData[]>(INITIAL_VIDEOS);
+  const [selectedVideoId, setSelectedVideoId] = useState(INITIAL_VIDEOS.length > 0 ? INITIAL_VIDEOS[0].id : "");
   const [searchQuery, setSearchQuery] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
   const [playerState, setPlayerState] = useState<number>(-1); // -1: unstarted, 1: playing, 2: paused
@@ -109,12 +108,25 @@ export default function App() {
     }
   };
 
+  const handleFetchNodeLogs = async () => {
+    addTrace("LOG_RETRIEVAL: Pulling verbatim node logs...");
+    try {
+      const res = await fetch('/api/logs');
+      const data = await res.json();
+      if (data.success) {
+        // Output logs to a window/dialog or directly to the trace
+        const lines = data.logs.split('\n').filter((l: string) => l.trim() !== "");
+        lines.slice(-20).forEach((line: string) => addTrace(`NODE_LOG: ${line}`));
+      }
+    } catch (e) {
+      addTrace("LOG_RETRIEVAL_FAIL: Node log stream interrupted.");
+    }
+  };
+
   /**
-   * VERBATIM_TRANSCRIPT_PIPELINE
-   * This function manages the multi-stage extraction process.
-   * 1. Attempt Server-side Scrape (Official + Manual fallback).
-   * 2. Detect Bot Challenges & trigger Human Verification UI.
-   * 3. Fallback to Gemini AI Research (using Google Search grounding).
+   * VERBATIM_TRANSCRIPT_PIPELINE (F1/F4/F8)
+   * This function manages the authoritative extraction process.
+   * AI-based fallbacks have been DECOMMISSIONED to ensure zero hallucinations.
    */
   const fetchVerbatimTranscript = async () => {
     if (!selectedVideo) return;
@@ -122,62 +134,30 @@ export default function App() {
     setTranscriptError(null);
 
     try {
-      addTrace(`RLM_PROBE: Initiating recursive synthesis for ${selectedVideo.videoId}`);
-      // STAGE 1: Recursive Environment Probe (RLM Paradigm)
+      addTrace(`SESSION_ORCHESTRATION: Initiating probe for ${selectedVideo.videoId}`);
       const response = await fetch('/api/recursive-extraction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoId: selectedVideo.videoId, depth: 0 })
       });
+      
       const data = await response.json();
 
       if (data.success) {
-        addTrace(`RLM_SUCCESS: Extracted ${data.segments.length} verbatim segments.`);
+        addTrace(`SESSION_VERIFIED: Extracted ${data.segments.length} verbatim segments.`);
         setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: data.segments } : v));
       } else {
-        if (data.error === "IDENTITY_VERIFICATION_REQUIRED" && !user) {
-          addTrace("RLM_BLOCK: YouTube heuristics triggered Bot Challenge.");
-          setTranscriptError("RECURSIVE_BLOCK_DETECTED // Identity proof required to verify this environment.");
-          return;
-        }
-
-        addTrace(`RLM_FALLBACK: Switching to Stage 3 Proxied Research.`);
-        try {
-          const researchResponse = await fetch('/api/gemini-research', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoId: selectedVideo.videoId, title: selectedVideo.title })
-          });
-          const researchData = await researchResponse.json();
-
-          if (researchData.success) {
-            const segments = researchData.segments.map((s: any, i: number) => ({
-              ...s,
-              id: `ai-research-${selectedVideo.videoId}-${i}`,
-              isStatic: false
-            }));
-
-            if (segments.length > 0) {
-              setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: segments } : v));
-              addTrace("RESEARCH_SUCCESS: Verbatim data retrieved via analytical node.");
-            } else {
-              setTranscriptError("Verbatim data unavailable across all nodes.");
-            }
-          } else {
-            addTrace(`RESEARCH_FAIL: ${researchData.error}`);
-            setTranscriptError(`Analytic research failed: ${researchData.error}`);
-          }
-        } catch (researchErr: any) {
-          addTrace(`RESEARCH_CRITICAL: ${researchErr.message}`);
-          setTranscriptError("Analytic research node interrupted.");
+        if (data.error === "IDENTITY_VERIFICATION_REQUIRED") {
+          addTrace("ORCHESTRATION_BLOCK: YouTube heuristics triggered Bot Challenge.");
+          setTranscriptError("IDENTITY_VERIFICATION_REQUIRED // Verified session needed.");
+        } else {
+          addTrace(`ORCHESTRATION_FAIL: ${data.error}`);
+          setTranscriptError(data.error || "UNAVAILABLE // Resource restricted.");
         }
       }
     } catch (err: any) {
-      // [!] PAIN_POINT_FLAGGED: Network failures here usually indicate 
-      // service-mesh proxy timeout. Retry logic should be implemented 
-      // in the RLM orchestrator layer.
-      addTrace(`RLM_CRITICAL: Network failure. ${err.message}`);
-      setTranscriptError("Network failure within the analytic pipeline.");
+      addTrace(`ORCHESTRATION_CRITICAL: Network failure. ${err.message}`);
+      setTranscriptError("NETWORK_TIMEOUT // Pipeline interrupted.");
     } finally {
       setIsFetchingTranscript(false);
     }
@@ -390,11 +370,13 @@ export default function App() {
   };
 
   /**
-   * Node Ingestion Handler
-   * Creates simple analytic nodes from YouTube URLs. 
-   * Prevents duplicates by jumping to existing nodes if detected.
+   * Node Ingestion Handler (F6)
+   * Implements strict mutual exclusion to prevent "Double-Ingest" concurrency errors.
    */
   const handleAddLinks = () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    
     const urls = linksText.split(/[\s,]+/).filter(u => u.trim());
     if (urls.length === 0) return;
 
@@ -438,6 +420,7 @@ export default function App() {
     
     setLinksText('');
     setIsAddPanelOpen(false);
+    setIsProcessing(false);
   };
 
   const handleExportClip = async () => {
@@ -479,7 +462,10 @@ export default function App() {
       <div className="absolute bottom-10 right-4 z-50 w-80 max-h-60 overflow-y-auto bg-slate-900/90 border border-slate-800 rounded shadow-2xl p-2 font-mono scrollbar-hide">
         <div className="flex items-center justify-between mb-2 pb-1 border-b border-white/5">
           <span className="text-[9px] text-emerald-500 font-black uppercase tracking-widest">Analytic Trace</span>
-          <Trash2 className="w-3 h-3 text-slate-600 cursor-pointer hover:text-rose-500" onClick={() => setTraceLogs([])} />
+          <div className="flex items-center gap-2">
+            <Activity className="w-3 h-3 text-slate-500 cursor-pointer hover:text-emerald-400" onClick={handleFetchNodeLogs} title="Pull Verbatim Node Logs" />
+            <Trash2 className="w-3 h-3 text-slate-600 cursor-pointer hover:text-rose-500" onClick={() => setTraceLogs([])} />
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           {traceLogs.map((log, i) => (

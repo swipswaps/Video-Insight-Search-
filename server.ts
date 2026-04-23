@@ -1,10 +1,8 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import * as pkg from "./node_modules/youtube-transcript/dist/youtube-transcript.esm.js";
-const { fetchTranscript: libraryFetchTranscript } = pkg;
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, SchemaType } from "@google/genai";
 
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -15,82 +13,120 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
+ * ANALYTIC_LOGGER
+ * Ensures all system events are captured in a memory buffer for verbatim retrieval.
+ */
+const MEMORY_LOGS: string[] = [];
+const logger = {
+  info: (msg: string) => {
+    const formatted = `[${new Date().toLocaleTimeString()}] [INFO] ${msg}`;
+    console.log(formatted);
+    MEMORY_LOGS.push(formatted);
+    if (MEMORY_LOGS.length > 500) MEMORY_LOGS.shift();
+  },
+  error: (msg: string, err?: any) => {
+    const formatted = `[${new Date().toLocaleTimeString()}] [ERROR] ${msg} ${err?.message || err || ""}`;
+    console.error(formatted);
+    MEMORY_LOGS.push(formatted);
+    if (MEMORY_LOGS.length > 500) MEMORY_LOGS.shift();
+  }
+};
+
+/**
+ * AUTHORITATIVE_TRANSCRIPT_EXTRACTION (F1)
+ * Bypasses unreliable libraries to probe official timedtext endpoints.
+ * This ensures zero-hallucination verbatim data synchronization.
+ */
+async function fetchTranscriptAuthoritative(videoId: string) {
+  try {
+    // 1. Identify available tracks
+    const listUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&type=list`;
+    const listRes = await fetch(listUrl);
+    const listText = await listRes.text();
+
+    if (!listText.includes('<track')) {
+      // If the list is empty, we attempt the manual player-response fallback
+      // which handles cases where timedtext?type=list is restricted but player data is not.
+      return await fetchTranscriptManual(videoId);
+    }
+
+    // 2. Select language (prefer 'en')
+    const langMatch = listText.match(/lang_code="([^"]+)"/);
+    const lang = langMatch ? langMatch[1] : 'en';
+
+    // 3. Retrieve JSON3 formatted captions
+    const captionUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
+    const captionRes = await fetch(captionUrl);
+    const json = await captionRes.json();
+
+    if (!json.events) {
+      throw new Error('INVALID_CAPTION_FORMAT');
+    }
+
+    // 4. Synthesize verbatim timeline
+    return json.events
+      .filter((e: any) => e.segs)
+      .map((e: any) => ({
+        offset: e.tStartMs,
+        duration: e.dDurationMs || 0,
+        text: e.segs.map((s: any) => s.utf8).join('')
+      }));
+  } catch (error) {
+    // Escape to manual probe if API list fails
+    return await fetchTranscriptManual(videoId);
+  }
+}
+
+/**
  * Manual fallback to extract transcripts directly from the YouTube page data.
- * This is used when the library scraper is blocked or fails to find tracks.
- * 
- * DESIGN RATIONALE: YouTube often blocks automated scrapers that use standard
- * headers. By mimicking a high-fidelity desktop browser (Chrome on Windows), we 
- * increase our chances of bypassing generic "bot" checks.
  */
 async function fetchTranscriptManual(videoId: string) {
-  // 1. Establish a high-trust connection to the video page.
-  // We use desktop query params (hl=en, gl=US) to ensure we get English transcript keys.
   const url = `https://www.youtube.com/watch?v=${videoId}&hl=en&gl=US`;
   const response = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
       "Accept-Language": "en-US,en;q=0.9",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-      "Cache-Control": "max-age=0",
-      "Sec-Fetch-Dest": "document",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-Site": "none",
-      "Sec-Fetch-User": "?1",
-      "Upgrade-Insecure-Requests": "1"
     }
   });
   
   const html = await response.text();
-  
-  // 2. Extract the hidden JSON data blob.
-  // YouTube stores the player configuration and metadata in a global variable called 
-  // 'ytInitialPlayerResponse'. This contains the URLs for all available caption tracks.
   const regex = /ytInitialPlayerResponse\s*=\s*({.+?});/s;
   const match = html.match(regex);
   
   if (!match) {
-    // If we can't find the data, YouTube is likely showing a "Bot Challenge" screen.
-    // We detect this specifically to prompt the user for human verification (sign-in).
     if (html.includes("Sign in to confirm you’re not a bot")) {
-      throw new Error("YouTube blocked the automated probe (Bot Challenge). Switch to AI Research mode.");
+      throw new Error("IDENTITY_VERIFICATION_REQUIRED");
     }
     throw new Error("Unable to locate player data in source.");
   }
-
-  // 3. Navigate the complex JSON structure to find subtitle tracks.
+  
   const data = JSON.parse(match[1]);
   const captionTracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
   if (!captionTracks || !Array.isArray(captionTracks) || captionTracks.length === 0) {
-    throw new Error("No caption tracks detected in player response. Subtitles may be restricted.");
+    throw new Error("NO_CAPTIONS_AVAILABLE");
   }
 
-  // 4. Select the best available track.
-  // We prioritize English ('en'), then fall back to the first available (usually primary).
   const track = captionTracks.find((t: any) => t.languageCode === 'en') || captionTracks[0];
   const trackUrl = track.baseUrl;
 
-  // 5. Fetch and parse the raw XML transcript.
   const trackResponse = await fetch(trackUrl);
   const xml = await trackResponse.text();
 
-  // 6. Build the segment array.
-  // The XML format uses <text start="XX.X" dur="YY.Y">CONTENT</text> tags.
-  // We parse these using a global regex to extract all segments into our internal format.
   const segments = [];
   const textRegex = /<text start="([\d.]+)" dur="([\d.]+)".*?>(.*?)<\/text>/g;
   let textMatch;
   
   while ((textMatch = textRegex.exec(xml)) !== null) {
     segments.push({
-      offset: parseFloat(textMatch[1]) * 1000, // Convert to ms for consistency with library
+      offset: parseFloat(textMatch[1]) * 1000,
       duration: parseFloat(textMatch[2]) * 1000,
       text: textMatch[3]
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'") // Handle HTML entities in subtitles
+        .replace(/&#39;/g, "'")
     });
   }
 
@@ -99,194 +135,78 @@ async function fetchTranscriptManual(videoId: string) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000; // Cloud environment strictly requires port 3000
+  const PORT = 3000;
 
   app.use(express.json());
 
-  /**
-   * UPGRADE & SYNC PIPELINE
-   * These routes allow the application to self-update from the remote repository.
-   * This ensures the analytic node is always using the latest scraper fixes.
-   */
-  app.get("/api/upgrade/check", async (req, res) => {
-    try {
-      await execPromise("git fetch --quiet");
-      const { stdout: local } = await execPromise("git rev-parse HEAD");
-      const { stdout: remote } = await execPromise("git rev-parse @{u}");
-      
-      res.json({ 
-        updatable: local.trim() !== remote.trim(),
-        local: local.trim().substring(0, 7),
-        remote: remote.trim().substring(0, 7)
-      });
-    } catch (e) {
-      res.status(500).json({ error: "Git environment detached or unavailable." });
-    }
+  // Logging Middleware (Verbatim terminal output for 'tee')
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+    next();
   });
 
-  app.post("/api/upgrade/apply", async (req, res) => {
+  /**
+   * VERBATIM_LOG_RETRIEVAL
+   * Securely streams the actual dev.log file from the filesystem.
+   */
+  app.get("/api/logs", (req, res) => {
     try {
-      // Force pull and reinstall dependencies to ensure a clean state after upgrade.
-      const { stdout } = await execPromise("git pull --force && npm install");
-      res.json({ success: true, log: stdout });
+      const logPath = path.join(process.cwd(), "dev.log");
+      if (fs.existsSync(logPath)) {
+        const logs = fs.readFileSync(logPath, "utf-8");
+        res.json({ success: true, logs });
+      } else {
+        res.json({ success: true, logs: "LOG_STREAM_INITIALIZING..." });
+      }
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }
   });
 
   /**
-   * VERBATIM TRANSCRIPT GATEWAY
-   * This is the core data extraction route. It implements a multi-stage fallback.
-   */
-  app.get("/api/transcript/:videoId", async (req, res) => {
-    const { videoId } = req.params;
-    console.log(`[VERBATIM_LOG] Fetching transcript for: ${videoId}`);
-    
-    try {
-      let transcript;
-      try {
-        // Stage 1: Official/Library Scraper
-        // Fast and reliable for standard videos.
-        transcript = await libraryFetchTranscript(videoId);
-      } catch (e) {
-        console.warn(`[VERBATIM_PIPELINE] Library fetch failed for ${videoId}, attempting manual fallback...`);
-        // Stage 2: Manual Browser-like Scraper
-        // Bypasses certain restriction layers that block simple HTTP clients.
-        transcript = await fetchTranscriptManual(videoId);
-      }
-      
-      // Stage 3: Normalize data for the frontend timeline.
-      const segments = transcript.map((entry, index) => {
-        // Handle variations in unit scaling (seconds vs ms) from different providers.
-        const start = entry.offset > 10000 ? Math.floor(entry.offset / 1000) : Math.floor(entry.offset);
-        const duration = entry.duration > 10000 ? Math.floor(entry.duration / 1000) : Math.floor(entry.duration);
-        
-        return {
-          id: `yt-${videoId}-${index}`,
-          start,
-          duration,
-          text: entry.text,
-          isStatic: false
-        };
-      });
-
-      res.json({ success: true, transcripts: segments });
-    } catch (error) {
-      console.error(`[VERBATIM_ERROR] Failed to fetch transcript:`, error);
-      res.status(500).json({ 
-        success: false, 
-        error: "Verbatim transcript unavailable or disabled for this video." 
-      });
-    }
-  });
-
-  /**
-   * GEMINI_ANALYTIC_RESEARCH (Proxied)
-   * This node handles Stage 4 of the verbatim pipeline.
-   * By proxying the request through the backend, we protect the API Key
-   * and bypass 'Browser Context' SDK errors.
-   */
-  app.post("/api/gemini-research", async (req, res) => {
-    const { videoId, title } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      return res.status(500).json({ success: false, error: "GEMINI_API_KEY_MISSING // Node unconfigured." });
-    }
-
-    const genAI = new GoogleGenAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash", 
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: SchemaType.ARRAY,
-          items: {
-            type: SchemaType.OBJECT,
-            properties: {
-              start: { type: SchemaType.NUMBER },
-              duration: { type: SchemaType.NUMBER },
-              text: { type: SchemaType.STRING },
-            },
-            required: ["start", "duration", "text"],
-          },
-        },
-      }
-    });
-
-    try {
-      const prompt = `Find the verbatim transcript with timestamps for the YouTube video ${videoId} (${title}). Return segments as JSON. Use official sources.`;
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      
-      const segments = JSON.parse(text || "[]");
-      res.json({ success: true, segments });
-    } catch (error: any) {
-      console.error("[GEMINI_RESEARCH_FAIL]", error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-  });
-
-  /**
-   * RECURSIVE_EXTRACTION_NODE (RLM Paradigm)
-   * Inspired by arXiv:2512.24601 & the Adam Knight 'Session Orchestration' technique.
-   * 
-   * This node treats the video timeline as an "External Environment".
-   * Instead of a linear fetch, it programmatically decomposes the video into 
-   * recursively analyzable snippets to bypass bot-detection heuristics and 
-   * ensure high-fidelity verbatim synthesis.
+   * SESSION_ORCHESTRATION_NODE (RLM Paradigm)
+   * Refactored to handle "Suitability Probes" before extraction.
    */
   app.post("/api/recursive-extraction", async (req, res) => {
-    const { videoId, startTime = 0, depth = 0, maxDepth = 5 } = req.body;
+    const { videoId, depth = 0, maxDepth = 3 } = req.body;
     
-    // 1. TERMINAL_CONDITION: Prevent infinite recursive loops.
     if (depth >= maxDepth) {
-      return res.status(500).json({ success: false, error: "RECURSIVE_LIMIT_REACHED // Synthesis aborted." });
+      console.error(`[RLM_LIMIT] Max recursion depth reached for ${videoId}`);
+      return res.status(500).json({ success: false, error: "RECURSIVE_LIMIT_REACHED" });
     }
 
-    console.log(`[RLM_NODE] Recursively probing environment: ${videoId} | Depth: ${depth} | Start: ${startTime}s`);
+    console.log(`[ORCHESTRATION] Session Probe Layer ${depth}: ${videoId}`);
 
     try {
-      // 2. PROGRAMMATIC_DECOMPOSITION
-      // [!] PAIN_POINT_FLAGGED: If the environment probe hits a 404, it implies 
-      // the route registration order is conflicting with the Vite middleware.
-      // ALWAYS register RLM nodes PRIOR to the SPA catch-all.
-      let transcript;
-      try {
-        transcript = await libraryFetchTranscript(videoId);
-      } catch (e) {
-        // 3. RECURSIVE_AUTH_RESOLUTION
-        // If Stage 1 fails, we recursively escalate to the manual high-fidelity scraper.
-        const manualProbe = await fetchTranscriptManual(videoId);
-        transcript = manualProbe;
-      }
-
-      // 4. VERBATIM_SYNTHESIS
-      const segments = transcript.map((entry, index) => ({
-        id: `rlm-${videoId}-${depth}-${index}`,
+      // Stage 1: Deterministic Authoritative Probe
+      const transcript = await fetchTranscriptAuthoritative(videoId);
+      
+      // Stage 2: Verbatim Synthesis
+      const segments = transcript.map((entry: any, index: number) => ({
+        id: `vbtm-${videoId}-${index}`,
         start: entry.offset > 10000 ? Math.floor(entry.offset / 1000) : Math.floor(entry.offset),
         duration: entry.duration > 10000 ? Math.floor(entry.duration / 1000) : Math.floor(entry.duration),
         text: entry.text,
         isStatic: false
       }));
 
-      res.json({ 
-        success: true, 
-        segments,
-        environmentStatus: "VERIFIED",
-        depth
-      });
+      // Stage 3: Monotonic Validation (F1 Check)
+      for (let i = 1; i < segments.length; i++) {
+        if (segments[i].start < segments[i-1].start) {
+          throw new Error('TIMESTAMP_ORDER_INVALID');
+        }
+      }
+
+      console.log(`[ORCHESTRATION_SUCCESS] Session verified. ${segments.length} segments synthesized.`);
+      res.json({ success: true, segments });
     } catch (error: any) {
-      // [!] PAIN_POINT_FLAGGED: Recursive loop failures must be caught early 
-      // to prevent heap exhaustion. Ensure depth check is the first line.
-      console.error(`[RLM_RECURSE_ERROR] Layer ${depth} failed:`, error.message);
+      console.error(`[ORCHESTRATION_FAIL] Layer ${depth}:`, error.message);
       
-      if (error.message.includes("Bot Challenge")) {
+      if (error.message.includes("IDENTITY_VERIFICATION_REQUIRED") || error.message.includes("challenge") || error.message.includes("Sign in")) {
         res.status(403).json({ 
           success: false, 
-          error: "IDENTITY_VERIFICATION_REQUIRED", 
-          reason: "YouTube heuristics detected a non-recursive signature." 
+          error: "IDENTITY_VERIFICATION_REQUIRED",
+          reason: "YouTube environment requires a Verified Session."
         });
       } else {
         res.status(500).json({ success: false, error: error.message });

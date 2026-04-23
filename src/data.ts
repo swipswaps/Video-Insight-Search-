@@ -65,7 +65,7 @@ export interface VideoData {
   excludedSegmentIds: string[];
 }
 
-export const MOCK_VIDEOS: VideoData[] = [
+export const INITIAL_VIDEOS: VideoData[] = [
   {
     id: "wood-boiler-node",
     title: "Wood Boiler Ingestion Connection",
