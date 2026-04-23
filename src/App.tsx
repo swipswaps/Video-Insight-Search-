@@ -49,6 +49,28 @@ export default function App() {
   const [upgradeAvailable, setUpgradeAvailable] = useState<boolean>(false);
   const [isUpgrading, setIsUpgrading] = useState<boolean>(false);
 
+  /**
+   * ANALYTIC_TRACE_ORCHESTRATOR
+   * This logic manages verbatim system logs with deduplication.
+   * Duplicate messages are collapsed and counted to prevent UI noise.
+   */
+  const [traceLogs, setTraceLogs] = useState<{ message: string, count: number, timestamp: string }[]>([]);
+  
+  const addTrace = (msg: string) => {
+    setTraceLogs(prev => {
+      const last = prev[0];
+      if (last && last.message === msg) {
+        return [{ ...last, count: last.count + 1 }, ...prev.slice(1)];
+      }
+      return [{ message: msg, count: 1, timestamp: new Date().toLocaleTimeString() }, ...prev].slice(0, 50);
+    });
+  };
+
+  useEffect(() => {
+    addTrace("SYSTEM_BOOT: Analytic Node initialized.");
+    addTrace("RLM_ENGINE: Recursive Language Model paradigm active.");
+  }, []);
+
   useEffect(() => {
     const checkUpgrade = async () => {
       try {
@@ -66,15 +88,19 @@ export default function App() {
 
   const handleApplyUpgrade = async () => {
     setIsUpgrading(true);
+    addTrace("NODE_UPGRADE: Attempting recursive system sync...");
     try {
       const res = await fetch('/api/upgrade/apply', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
+        addTrace("NODE_UPGRADE: Success. Hot-reloading node...");
         window.location.reload();
       } else {
+        addTrace(`NODE_UPGRADE_FAIL: ${data.error}`);
         alert("Upgrade failed: " + data.error);
       }
     } catch (e) {
+      addTrace("NODE_UPGRADE_CRITICAL: Analytic node upgrade interrupted.");
       alert("Analytic node upgrade interrupted.");
     } finally {
       setIsUpgrading(false);
@@ -94,8 +120,8 @@ export default function App() {
     setTranscriptError(null);
 
     try {
+      addTrace(`RLM_PROBE: Initiating recursive synthesis for ${selectedVideo.videoId}`);
       // STAGE 1: Recursive Environment Probe (RLM Paradigm)
-      // Instead of a simple fetch, we initiate a 'Recursive Synthesis' call.
       const response = await fetch('/api/recursive-extraction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -104,17 +130,16 @@ export default function App() {
       const data = await response.json();
 
       if (data.success) {
-        // Success: Commit the synthesized verbatim segments to the data vault.
+        addTrace(`RLM_SUCCESS: Extracted ${data.segments.length} verbatim segments.`);
         setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: data.segments } : v));
       } else {
-        // STAGE 2: Bot Challenge Detection (Recursive Escalation)
-        // If the recursive logic hits a heuristic wall, we prompt for Human Proof.
         if (data.error === "IDENTITY_VERIFICATION_REQUIRED" && !user) {
+          addTrace("RLM_BLOCK: YouTube heuristics triggered Bot Challenge.");
           setTranscriptError("RECURSIVE_BLOCK_DETECTED // Identity proof required to verify this environment.");
           return;
         }
 
-        // STAGE 3: Gemini Deep-Analytic Research
+        addTrace(`RLM_FALLBACK: Switching to Stage 3 AI Research.`);
         // If technical extraction fails, we use Gemini 3's search capabilities to find
         // transcribed data available in public archives or official video metadata.
         console.warn("[VERBATIM_GATEWAY] Backend failed, switching to Gemini Analytic Research...");
@@ -161,7 +186,11 @@ export default function App() {
           setTranscriptError("Analytic research failed to find verified tracks.");
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      // [!] PAIN_POINT_FLAGGED: Network failures here usually indicate 
+      // service-mesh proxy timeout. Retry logic should be implemented 
+      // in the RLM orchestrator layer.
+      addTrace(`RLM_CRITICAL: Network failure. ${err.message}`);
       setTranscriptError("Network failure within the analytic pipeline.");
     } finally {
       setIsFetchingTranscript(false);
@@ -457,8 +486,28 @@ export default function App() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Footer Status Bar
   return (
     <div className="h-screen w-full bg-slate-950 text-slate-200 font-sans flex flex-col overflow-hidden">
+      {/* Analytic Trace Panel (Collapsible) */}
+      <div className="absolute bottom-10 right-4 z-50 w-80 max-h-60 overflow-y-auto bg-slate-900/90 border border-slate-800 rounded shadow-2xl p-2 font-mono scrollbar-hide">
+        <div className="flex items-center justify-between mb-2 pb-1 border-b border-white/5">
+          <span className="text-[9px] text-emerald-500 font-black uppercase tracking-widest">Analytic Trace</span>
+          <Trash2 className="w-3 h-3 text-slate-600 cursor-pointer hover:text-rose-500" onClick={() => setTraceLogs([])} />
+        </div>
+        <div className="flex flex-col gap-1">
+          {traceLogs.map((log, i) => (
+            <div key={i} className="text-[8px] flex items-start gap-2 border-l border-emerald-500/20 pl-2 py-0.5">
+              <span className="text-slate-600 shrink-0">{log.timestamp}</span>
+              <span className="text-slate-300 break-all">{log.message}</span>
+              {log.count > 1 && (
+                <span className="bg-emerald-500/20 text-emerald-400 px-1 rounded-sm font-bold">×{log.count}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Header / Search Bar */}
       <header className="h-14 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/50 flex-shrink-0">
         <div className="flex items-center gap-6">

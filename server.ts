@@ -200,8 +200,9 @@ async function startServer() {
 
     try {
       // 2. PROGRAMMATIC_DECOMPOSITION
-      // In a full RLM implementation, this would trigger a sub-agent.
-      // Here, we simulate the 'recursive self-call' logic by escalating the probe.
+      // [!] PAIN_POINT_FLAGGED: If the environment probe hits a 404, it implies 
+      // the route registration order is conflicting with the Vite middleware.
+      // ALWAYS register RLM nodes PRIOR to the SPA catch-all.
       let transcript;
       try {
         transcript = await libraryFetchTranscript(videoId);
@@ -228,6 +229,8 @@ async function startServer() {
         depth
       });
     } catch (error: any) {
+      // [!] PAIN_POINT_FLAGGED: Recursive loop failures must be caught early 
+      // to prevent heap exhaustion. Ensure depth check is the first line.
       console.error(`[RLM_RECURSE_ERROR] Layer ${depth} failed:`, error.message);
       
       if (error.message.includes("Bot Challenge")) {
