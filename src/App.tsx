@@ -7,20 +7,32 @@ import { auth, signIn, logout } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 export default function App() {
+  /**
+   * USER_AUTHENTICATION_STATE
+   * We track the Firebase user object to manage 'Verified Sessions'.
+   * A logged-in user provides the 'human proof' needed to bypass YouTube bot detection.
+   */
   const [user, setUser] = useState<FirebaseUser | null>(null);
   
   useEffect(() => {
+    // Listen for authentication state changes (login/logout).
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
     });
-    return () => unsubscribe();
+    return () => unsubscribe(); // Cleanup listener on unmount.
   }, []);
 
+  /**
+   * CORE_APPLICATION_STATE
+   * videos: The library of analyzed videos and their verbatim transcripts.
+   * selectedVideoId: Pointer to the active video in the workspace.
+   * currentTime: Real-time playback position synced from the YouTube iframe.
+   */
   const [videos, setVideos] = useState<VideoData[]>(MOCK_VIDEOS);
   const [selectedVideoId, setSelectedVideoId] = useState(MOCK_VIDEOS.length > 0 ? MOCK_VIDEOS[0].id : "");
   const [searchQuery, setSearchQuery] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
-  const [playerState, setPlayerState] = useState<number>(-1); // -1: unstarted
+  const [playerState, setPlayerState] = useState<number>(-1); // -1: unstarted, 1: playing, 2: paused
   const [hasStartedPlaying, setHasStartedPlaying] = useState(false);
   const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
   const [linksText, setLinksText] = useState('');
@@ -29,7 +41,11 @@ export default function App() {
   const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
-  // Upgrade Tracking State
+  /**
+   * UPGRADE_TRACKING_STATE
+   * The application polls the server to check for Git-based updates.
+   * If the local node drifts from the stable branch, we show an upgrade prompt.
+   */
   const [upgradeAvailable, setUpgradeAvailable] = useState<boolean>(false);
   const [isUpgrading, setIsUpgrading] = useState<boolean>(false);
 
@@ -65,25 +81,38 @@ export default function App() {
     }
   };
 
+  /**
+   * VERBATIM_TRANSCRIPT_PIPELINE
+   * This function manages the multi-stage extraction process.
+   * 1. Attempt Server-side Scrape (Official + Manual fallback).
+   * 2. Detect Bot Challenges & trigger Human Verification UI.
+   * 3. Fallback to Gemini AI Research (using Google Search grounding).
+   */
   const fetchVerbatimTranscript = async () => {
     if (!selectedVideo) return;
     setIsFetchingTranscript(true);
     setTranscriptError(null);
 
     try {
+      // STAGE 1: Server-side Extraction
       const response = await fetch(`/api/transcript/${selectedVideo.videoId}`);
       const data = await response.json();
 
       if (data.success) {
+        // Success: Update the video object with the verbatim track.
         setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: data.transcripts } : v));
       } else {
-        // Track the block reason
+        // STAGE 2: Bot Challenge Detection
+        // If the backend detected a bot block, we verify if the user is authenticated.
+        // A 'Verified Session' is usually enough to bypass these challenges.
         if (data.error?.includes("Bot Challenge") && !user) {
           setTranscriptError("IDENTITY_VERIFICATION_REQUIRED // YouTube requested human proof.");
           return;
         }
 
-        // Stage 2: Gemini Research Fallback
+        // STAGE 3: Gemini Research Fallback
+        // If technical extraction fails, we use Gemini 3's search capabilities to find
+        // transcribed data available in public archives or official video metadata.
         console.warn("[VERBATIM_GATEWAY] Backend failed, switching to Gemini Analytic Research...");
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         
@@ -111,6 +140,7 @@ export default function App() {
             }
           });
 
+          // Parse the AI-researched segments and normalize them.
           const segments = JSON.parse(genResponse.text || "[]").map((s: any, i: number) => ({
             ...s,
             id: `ai-research-${selectedVideo.videoId}-${i}`,

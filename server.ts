@@ -16,9 +16,14 @@ const __dirname = path.dirname(__filename);
 /**
  * Manual fallback to extract transcripts directly from the YouTube page data.
  * This is used when the library scraper is blocked or fails to find tracks.
+ * 
+ * DESIGN RATIONALE: YouTube often blocks automated scrapers that use standard
+ * headers. By mimicking a high-fidelity desktop browser (Chrome on Windows), we 
+ * increase our chances of bypassing generic "bot" checks.
  */
 async function fetchTranscriptManual(videoId: string) {
-  // Use desktop URL with high-fidelity headers to mimic a real browser
+  // 1. Establish a high-trust connection to the video page.
+  // We use desktop query params (hl=en, gl=US) to ensure we get English transcript keys.
   const url = `https://www.youtube.com/watch?v=${videoId}&hl=en&gl=US`;
   const response = await fetch(url, {
     headers: {
@@ -36,17 +41,22 @@ async function fetchTranscriptManual(videoId: string) {
   
   const html = await response.text();
   
-  // Look for the initial data blob which contains caption tracks
+  // 2. Extract the hidden JSON data blob.
+  // YouTube stores the player configuration and metadata in a global variable called 
+  // 'ytInitialPlayerResponse'. This contains the URLs for all available caption tracks.
   const regex = /ytInitialPlayerResponse\s*=\s*({.+?});/s;
   const match = html.match(regex);
   
   if (!match) {
+    // If we can't find the data, YouTube is likely showing a "Bot Challenge" screen.
+    // We detect this specifically to prompt the user for human verification (sign-in).
     if (html.includes("Sign in to confirm you’re not a bot")) {
       throw new Error("YouTube blocked the automated probe (Bot Challenge). Switch to AI Research mode.");
     }
     throw new Error("Unable to locate player data in source.");
   }
 
+  // 3. Navigate the complex JSON structure to find subtitle tracks.
   const data = JSON.parse(match[1]);
   const captionTracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
@@ -54,28 +64,32 @@ async function fetchTranscriptManual(videoId: string) {
     throw new Error("No caption tracks detected in player response. Subtitles may be restricted.");
   }
 
-  // Prefer English (en) or the first available track
+  // 4. Select the best available track.
+  // We prioritize English ('en'), then fall back to the first available (usually primary).
   const track = captionTracks.find((t: any) => t.languageCode === 'en') || captionTracks[0];
   const trackUrl = track.baseUrl;
 
+  // 5. Fetch and parse the raw XML transcript.
   const trackResponse = await fetch(trackUrl);
   const xml = await trackResponse.text();
 
-  // Simple XML parser for the timed text format
+  // 6. Build the segment array.
+  // The XML format uses <text start="XX.X" dur="YY.Y">CONTENT</text> tags.
+  // We parse these using a global regex to extract all segments into our internal format.
   const segments = [];
   const textRegex = /<text start="([\d.]+)" dur="([\d.]+)".*?>(.*?)<\/text>/g;
   let textMatch;
   
   while ((textMatch = textRegex.exec(xml)) !== null) {
     segments.push({
-      offset: parseFloat(textMatch[1]) * 1000,
+      offset: parseFloat(textMatch[1]) * 1000, // Convert to ms for consistency with library
       duration: parseFloat(textMatch[2]) * 1000,
       text: textMatch[3]
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
+        .replace(/&#39;/g, "'") // Handle HTML entities in subtitles
     });
   }
 
@@ -84,11 +98,15 @@ async function fetchTranscriptManual(videoId: string) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = 3000; // Cloud environment strictly requires port 3000
 
   app.use(express.json());
 
-  // Upgrade / Git Sync Pipeline
+  /**
+   * UPGRADE & SYNC PIPELINE
+   * These routes allow the application to self-update from the remote repository.
+   * This ensures the analytic node is always using the latest scraper fixes.
+   */
   app.get("/api/upgrade/check", async (req, res) => {
     try {
       await execPromise("git fetch --quiet");
@@ -107,6 +125,7 @@ async function startServer() {
 
   app.post("/api/upgrade/apply", async (req, res) => {
     try {
+      // Force pull and reinstall dependencies to ensure a clean state after upgrade.
       const { stdout } = await execPromise("git pull --force && npm install");
       res.json({ success: true, log: stdout });
     } catch (e: any) {
@@ -114,7 +133,10 @@ async function startServer() {
     }
   });
 
-  // API Route to fetch verbatim YouTube transcripts
+  /**
+   * VERBATIM TRANSCRIPT GATEWAY
+   * This is the core data extraction route. It implements a multi-stage fallback.
+   */
   app.get("/api/transcript/:videoId", async (req, res) => {
     const { videoId } = req.params;
     console.log(`[VERBATIM_LOG] Fetching transcript for: ${videoId}`);
@@ -123,17 +145,18 @@ async function startServer() {
       let transcript;
       try {
         // Stage 1: Official/Library Scraper
+        // Fast and reliable for standard videos.
         transcript = await libraryFetchTranscript(videoId);
       } catch (e) {
         console.warn(`[VERBATIM_PIPELINE] Library fetch failed for ${videoId}, attempting manual fallback...`);
         // Stage 2: Manual Browser-like Scraper
+        // Bypasses certain restriction layers that block simple HTTP clients.
         transcript = await fetchTranscriptManual(videoId);
       }
       
-      // Map to our internal TranscriptSegment format
+      // Stage 3: Normalize data for the frontend timeline.
       const segments = transcript.map((entry, index) => {
-        // Library usually returns seconds, but some sources might return ms.
-        // We ensure we have seconds for the frontend Timeline.
+        // Handle variations in unit scaling (seconds vs ms) from different providers.
         const start = entry.offset > 10000 ? Math.floor(entry.offset / 1000) : Math.floor(entry.offset);
         const duration = entry.duration > 10000 ? Math.floor(entry.duration / 1000) : Math.floor(entry.duration);
         
@@ -156,17 +179,19 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
+  // VITE MIDDLEWARE CONFIGURATION
+  // In development, Vite handles asset serving and transformation.
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { 
         middlewareMode: true,
-        hmr: false // Disable HMR to prevent port 24678 conflicts in this environment
+        hmr: false // CRITICAL: Disabled to prevent port 24678 conflicts in AI Studio
       },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
+    // In production, we serve pre-built static files from the dist directory.
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {

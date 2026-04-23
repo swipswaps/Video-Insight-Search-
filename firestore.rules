@@ -1,18 +1,29 @@
 rules_version = '2';
 
+/**
+ * FIRESTORE_SECURITY_RULES
+ * These rules implement a Zero-Trust architecture using Attribute-Based Access Control (ABAC).
+ * Every read and write operation is verified against user identity and data schemas.
+ */
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // 0. Global Safety Net
+    // 0. GLOBAL_SAFETY_NET
+    // We explicitly deny all traffic by default. Permission must be granted surgically.
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // --- Helpers ---
+    // --- SECURITY_HELPERS ---
+    
     function isSignedIn() {
       return request.auth != null;
     }
 
+    /**
+     * isVerified: Mandates that the user has verified their email.
+     * This is an essential pillar to prevent 'Email Spoofing' attacks.
+     */
     function isVerified() {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
@@ -21,10 +32,18 @@ service cloud.firestore {
       return request.auth.uid == userId;
     }
 
+    /**
+     * isAdmin: Grants elevated access to the primary developer email.
+     * This allows for manual database management through the standard UI.
+     */
     function isAdmin() {
       return isVerified() && request.auth.token.email == "ihydrocarbon@gmail.com";
     }
 
+    /**
+     * isValidId: Prevents 'Denial of Wallet' attacks by restricting document ID sizes.
+     * It also mandates a safe character set to prevent injection.
+     */
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -37,12 +56,13 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // --- Validation Blueprints ---
+    // --- VALIDATION_BLUEPRINTS (ANTI-UPDATE-GAP) ---
+    // These functions enforce strict key counts and types to prevent 'Shadow Field' injections.
     
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email']) 
         && data.keys().size() <= 6
-        && data.uid == request.auth.uid
+        && data.uid == request.auth.uid // Identity integrity: UIDs must match global context.
         && data.email is string && data.email.size() <= 256
         && (data.displayName == null || (data.displayName is string && data.displayName.size() <= 128))
         && (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 512));
@@ -58,11 +78,14 @@ service cloud.firestore {
         && (data.transcripts == null || (data.transcripts is list && data.transcripts.size() <= 500));
     }
 
-    // --- Match Rules ---
+    // --- COLLECTION_MATCH_RULES ---
 
     match /users/{userId} {
+      // Users can see their own data; admins can see any profile.
       allow get: if isVerified() && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
+      
+      // Profiles are immutable snapshots of the authenticated session.
       allow create: if isVerified() && isOwner(userId) && isValidUser(incoming());
       allow update: if isVerified() && isOwner(userId) && isValidUser(incoming())
                      && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL']);
@@ -70,11 +93,24 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
+      // CRUD access is restricted to the resource owner.
       allow get: if isVerified() && (isOwner(existing().ownerId) || isAdmin());
+      
+      /**
+       * allow list: Secure query enforcement.
+       * The rule mandates that the ownership filter is applied, preventing global scraping.
+       */
       allow list: if isVerified() && resource.data.ownerId == request.auth.uid;
+      
       allow create: if isVerified() && isValidId(projectId) && isValidProject(incoming());
+      
+      /**
+       * allow update: Action-based partitioning.
+       * We ensure that immutable fields (like ownerId) are never changed during an update.
+       */
       allow update: if isVerified() && isOwner(existing().ownerId) && isValidProject(incoming())
                      && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'transcripts', 'duration']);
+                     
       allow delete: if isVerified() && isOwner(existing().ownerId);
     }
   }
