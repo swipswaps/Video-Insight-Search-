@@ -51,16 +51,18 @@ export default function App() {
 
   /**
    * ANALYTIC_TRACE_ORCHESTRATOR
-   * This logic manages verbatim system logs with deduplication.
-   * Duplicate messages are collapsed and counted to prevent UI noise.
+   * This logic manages verbatim system logs with global deduplication.
+   * Identical entries are collapsed and moved to the head of the trace.
    */
   const [traceLogs, setTraceLogs] = useState<{ message: string, count: number, timestamp: string }[]>([]);
   
   const addTrace = (msg: string) => {
     setTraceLogs(prev => {
-      const last = prev[0];
-      if (last && last.message === msg) {
-        return [{ ...last, count: last.count + 1 }, ...prev.slice(1)];
+      const existingIndex = prev.findIndex(l => l.message === msg);
+      if (existingIndex !== -1) {
+        const item = prev[existingIndex];
+        const updated = { ...item, count: item.count + 1, timestamp: new Date().toLocaleTimeString() };
+        return [updated, ...prev.filter((_, i) => i !== existingIndex)].slice(0, 50);
       }
       return [{ message: msg, count: 1, timestamp: new Date().toLocaleTimeString() }, ...prev].slice(0, 50);
     });
@@ -139,51 +141,35 @@ export default function App() {
           return;
         }
 
-        addTrace(`RLM_FALLBACK: Switching to Stage 3 AI Research.`);
-        // If technical extraction fails, we use Gemini 3's search capabilities to find
-        // transcribed data available in public archives or official video metadata.
-        console.warn("[VERBATIM_GATEWAY] Backend failed, switching to Gemini Analytic Research...");
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        
+        addTrace(`RLM_FALLBACK: Switching to Stage 3 Proxied Research.`);
         try {
-          const genResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `I need the verbatim transcript with timestamps for the YouTube video ${selectedVideo.videoId} (${selectedVideo.title}). 
-            Find the original transcript tracks and return them as a list of segments. 
-            Use google search to find the official transcript data if needed.`,
-            config: {
-              tools: [{ googleSearch: {} }],
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    start: { type: Type.NUMBER, description: "Start time in seconds" },
-                    duration: { type: Type.NUMBER, description: "Duration in seconds" },
-                    text: { type: Type.STRING, description: "The verbatim text" }
-                  },
-                  required: ["start", "duration", "text"]
-                }
-              }
-            }
+          const researchResponse = await fetch('/api/gemini-research', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: selectedVideo.videoId, title: selectedVideo.title })
           });
+          const researchData = await researchResponse.json();
 
-          // Parse the AI-researched segments and normalize them.
-          const segments = JSON.parse(genResponse.text || "[]").map((s: any, i: number) => ({
-            ...s,
-            id: `ai-research-${selectedVideo.videoId}-${i}`,
-            isStatic: false
-          }));
+          if (researchData.success) {
+            const segments = researchData.segments.map((s: any, i: number) => ({
+              ...s,
+              id: `ai-research-${selectedVideo.videoId}-${i}`,
+              isStatic: false
+            }));
 
-          if (segments.length > 0) {
-            setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: segments } : v));
+            if (segments.length > 0) {
+              setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, transcripts: segments } : v));
+              addTrace("RESEARCH_SUCCESS: Verbatim data retrieved via analytical node.");
+            } else {
+              setTranscriptError("Verbatim data unavailable across all nodes.");
+            }
           } else {
-            setTranscriptError("Verbatim data unavailable across all nodes.");
+            addTrace(`RESEARCH_FAIL: ${researchData.error}`);
+            setTranscriptError(`Analytic research failed: ${researchData.error}`);
           }
-        } catch (aiErr) {
-          console.error("[VERBATIM_AI_ERROR]", aiErr);
-          setTranscriptError("Analytic research failed to find verified tracks.");
+        } catch (researchErr: any) {
+          addTrace(`RESEARCH_CRITICAL: ${researchErr.message}`);
+          setTranscriptError("Analytic research node interrupted.");
         }
       }
     } catch (err: any) {
@@ -527,25 +513,28 @@ export default function App() {
         </div>
         <div className="flex items-center gap-6">
           {user ? (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 bg-slate-800/50 pl-3 pr-1 py-1 rounded-full border border-emerald-500/20">
               <div className="flex flex-col items-end">
-                <span className="text-[8px] font-mono text-emerald-400">VERIFIED_NODE</span>
-                <span className="text-[9px] font-bold text-slate-300">{user.email?.split('@')[0]}</span>
+                <span className="text-[7px] font-mono text-emerald-400 font-bold leading-none">VERIFIED_NODE</span>
+                <span className="text-[9px] font-black text-slate-100 uppercase tracking-tighter leading-tight">
+                  {user.displayName || user.email?.split('@')[0]}
+                </span>
               </div>
               <button 
                 onClick={logout}
-                className="w-8 h-8 rounded-full border border-emerald-500/20 overflow-hidden hover:border-emerald-500/50 transition-colors"
+                className="w-7 h-7 rounded-full border border-emerald-500/50 overflow-hidden hover:scale-105 transition-all shadow-lg shadow-emerald-500/10"
                 title="Logout"
               >
-                <img src={user.photoURL || `https://ui-avatars.com/api/?name=${user.email}`} alt="User" />
+                <img src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`} alt="User" referrerPolicy="no-referrer" />
               </button>
             </div>
           ) : (
             <button 
               onClick={signIn}
-              className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 rounded text-[9px] font-black uppercase transition-all"
+              className="group flex items-center gap-2 px-4 py-2 bg-emerald-500 text-slate-950 rounded text-[10px] font-black uppercase transition-all hover:bg-emerald-400 active:scale-95"
             >
-              <User className="w-3 h-3" /> Connect Account
+              <User className="w-3.5 h-3.5" /> 
+              <span>Connect Account</span>
             </button>
           )}
 

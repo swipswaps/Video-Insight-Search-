@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import * as pkg from "./node_modules/youtube-transcript/dist/youtube-transcript.esm.js";
 const { fetchTranscript: libraryFetchTranscript } = pkg;
 import { createServer as createViteServer } from "vite";
+import { GoogleGenAI, SchemaType } from "@google/genai";
 
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -176,6 +177,54 @@ async function startServer() {
         success: false, 
         error: "Verbatim transcript unavailable or disabled for this video." 
       });
+    }
+  });
+
+  /**
+   * GEMINI_ANALYTIC_RESEARCH (Proxied)
+   * This node handles Stage 4 of the verbatim pipeline.
+   * By proxying the request through the backend, we protect the API Key
+   * and bypass 'Browser Context' SDK errors.
+   */
+  app.post("/api/gemini-research", async (req, res) => {
+    const { videoId, title } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: "GEMINI_API_KEY_MISSING // Node unconfigured." });
+    }
+
+    const genAI = new GoogleGenAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash", 
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              start: { type: SchemaType.NUMBER },
+              duration: { type: SchemaType.NUMBER },
+              text: { type: SchemaType.STRING },
+            },
+            required: ["start", "duration", "text"],
+          },
+        },
+      }
+    });
+
+    try {
+      const prompt = `Find the verbatim transcript with timestamps for the YouTube video ${videoId} (${title}). Return segments as JSON. Use official sources.`;
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      const segments = JSON.parse(text || "[]");
+      res.json({ success: true, segments });
+    } catch (error: any) {
+      console.error("[GEMINI_RESEARCH_FAIL]", error);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 
