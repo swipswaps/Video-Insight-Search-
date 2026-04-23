@@ -9,6 +9,10 @@ export interface TranscriptSegment {
   duration: number;
   /** The captured text for this segment */
   text: string;
+  /** Flag indicating if the segment contains static imagery (e.g. title cards) */
+  isStatic?: boolean;
+  /** Unique ID for segment targeting */
+  id: string;
 }
 
 /**
@@ -55,6 +59,8 @@ export interface VideoData {
   transcripts: TranscriptSegment[];
   /** Aggregate community feedback */
   comments: VideoComment[];
+  /** IDs of segments to omit from playback/export (The EDL) */
+  excludedSegmentIds: string[];
 }
 
 /**
@@ -71,13 +77,14 @@ export const MOCK_VIDEOS: VideoData[] = [
     duration: 328,
     status: 'available',
     transcripts: [
-      { start: 0, duration: 15, text: "Welcome to Alternative Heating and Supplies. I'm Jeff. Today we're going to talk about wood boiler water treatment." },
-      { start: 30, duration: 25, text: "Why do we need water treatment? Because your wood boiler is made of steel, and steel likes to rust when exposed to oxygen and water." },
-      { start: 75, duration: 20, text: "The closed loop system needs a chemical scavenger to remove that oxygen and protect the heat exchangers." }
+      { id: "s1-1", isStatic: true, start: 0, duration: 15, text: "Welcome to Alternative Heating and Supplies. I'm Jeff. Today we're going to talk about wood boiler water treatment." },
+      { id: "s1-2", start: 30, duration: 25, text: "Why do we need water treatment? Because your wood boiler is made of steel, and steel likes to rust when exposed to oxygen and water." },
+      { id: "s1-3", start: 75, duration: 20, text: "The closed loop system needs a chemical scavenger to remove that oxygen and protect the heat exchangers." }
     ],
     comments: [
       { id: "c1", author: "HistoryBuff", text: "The transition to digital archives was handled expertly here.", timestamp: "2 days ago" }
-    ]
+    ],
+    excludedSegmentIds: []
   },
   {
     id: "2",
@@ -88,13 +95,14 @@ export const MOCK_VIDEOS: VideoData[] = [
     duration: 262,
     status: 'available',
     transcripts: [
-      { start: 0, duration: 20, text: "Urbanization is a central theme of the 21st century. It's not just about people moving to cities, it's about how those cities adapt." },
-      { start: 30, duration: 25, text: "Sustainable urbanization requires a shift from linear to circular systems in both physical infrastructure and digital management." },
-      { start: 60, duration: 25, text: "By the year 2050, it is estimated that two-thirds of the world's population will live in urban areas." }
+      { id: "s2-1", start: 0, duration: 20, text: "Urbanization is a central theme of the 21st century. It's not just about people moving to cities, it's about how those cities adapt." },
+      { id: "s2-2", isStatic: true, start: 30, duration: 25, text: "Sustainable urbanization requires a shift from linear to circular systems in both physical infrastructure and digital management." },
+      { id: "s2-3", start: 60, duration: 25, text: "By the year 2050, it is estimated that two-thirds of the world's population will live in urban areas." }
     ],
     comments: [
       { id: "c3", author: "CreativeLead", text: "The color contrast is significantly higher in this version.", timestamp: "5 hours ago" }
-    ]
+    ],
+    excludedSegmentIds: []
   },
   {
     id: "3",
@@ -105,12 +113,13 @@ export const MOCK_VIDEOS: VideoData[] = [
     duration: 180,
     status: 'available',
     transcripts: [
-      { start: 0, duration: 15, text: "A brand is not what you say it is. It is what they say it is." },
-      { start: 30, duration: 20, text: "Your brand is a promise you make to your customers. If you break that promise, you lose the brand." },
-      { start: 60, duration: 25, text: "Great brands are built on authenticity and a deep understanding of the human condition." }
+      { id: "s3-1", start: 0, duration: 15, text: "A brand is not what you say it is. It is what they say it is." },
+      { id: "s3-2", start: 30, duration: 20, text: "Your brand is a promise you make to your customers. If you break that promise, you lose the brand." },
+      { id: "s3-3", start: 60, duration: 25, text: "Great brands are built on authenticity and a deep understanding of the human condition." }
     ],
     comments: [
       { id: "c4", author: "DevOps_Dan", text: "The segment at 3:19 is exactly what I was looking for.", timestamp: "1 week ago" }
-    ]
+    ],
+    excludedSegmentIds: []
   }
 ];

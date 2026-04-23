@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Play, Pause, ChevronLeft, ChevronRight, MessageSquare, List, Clock, Info, Activity, Database, User, Plus, X, AlertTriangle, ExternalLink, Trash2 } from 'lucide-react';
+import { Search, Play, Pause, ChevronLeft, ChevronRight, MessageSquare, List, Clock, Info, Activity, Database, User, Plus, X, AlertTriangle, ExternalLink, Trash2, Scissors, SkipForward } from 'lucide-react';
 import { MOCK_VIDEOS, VideoData, TranscriptSegment } from './data';
 import { GoogleGenAI } from "@google/genai";
 
@@ -32,6 +32,15 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   
   const videoRef = useRef<HTMLIFrameElement>(null);
+
+  const toggleExcludeSegment = (segmentId: string) => {
+    if (!selectedVideo) return;
+    const newExcluded = selectedVideo.excludedSegmentIds.includes(segmentId)
+      ? selectedVideo.excludedSegmentIds.filter(id => id !== segmentId)
+      : [...selectedVideo.excludedSegmentIds, segmentId];
+    
+    setVideos(videos.map(v => v.id === selectedVideo.id ? { ...v, excludedSegmentIds: newExcluded } : v));
+  };
 
   const handleDeleteVideo = (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid selecting the video when clicking delete
@@ -121,9 +130,32 @@ export default function App() {
         }
         if (data.event === 'infoDelivery' && data.info) {
           if (data.info.currentTime !== undefined) {
-            setCurrentTime(data.info.currentTime);
-            // If the time moves, we've clearly started interaction
-            if (data.info.currentTime > 0) {
+            const newTime = data.info.currentTime;
+            setCurrentTime(newTime);
+            
+            // EDL & JUMP-CUT LOGIC:
+            // If auto-sync or editor is on, skip segments marked as excluded OR isStatic logic.
+            if (selectedVideo && (isAutoSyncEnabled || isEditorMode)) {
+              const currentSegment = selectedVideo.transcripts.find(seg => 
+                newTime >= seg.start && newTime < (seg.start + seg.duration)
+              );
+              
+              if (currentSegment && (selectedVideo.excludedSegmentIds.includes(currentSegment.id) || currentSegment.isStatic)) {
+                // Find next valid segment
+                const nextValidSegment = selectedVideo.transcripts.find(seg => 
+                  seg.start > currentSegment.start && 
+                  !selectedVideo.excludedSegmentIds.includes(seg.id) && 
+                  !seg.isStatic
+                );
+                
+                if (nextValidSegment) {
+                  seekTo(nextValidSegment.start);
+                  console.log(`[EDL_JUMP] Skipping ${currentSegment.isStatic ? 'STATIC_NODE' : 'EXCLUDED_CONTENT'} ${currentSegment.id} -> Advancing to ${nextValidSegment.start}s`);
+                }
+              }
+            }
+
+            if (newTime > 0) {
               setHasStartedPlaying(true);
             }
           }
@@ -216,9 +248,20 @@ export default function App() {
           let aiTranscripts: TranscriptSegment[] = [];
           try {
             const text = aiResponse.text || '[]';
-            aiTranscripts = JSON.parse(text);
+            const rawTranscripts = JSON.parse(text);
+            aiTranscripts = rawTranscripts.map((t: any, idx: number) => ({
+              ...t,
+              id: `segment-${vid}-${idx}-${Math.random().toString(36).substr(2, 5)}`,
+              isStatic: t.text.toLowerCase().includes('introduction') || t.text.toLowerCase().includes('welcome')
+            }));
           } catch (e) {
-            aiTranscripts = [{ start: 0, duration: 20, text: "Welcome to this specialized session. Please follow along as we explore the core concepts." }];
+            aiTranscripts = [{ 
+              id: `segment-${vid}-fallback`,
+              start: 0, 
+              duration: 20, 
+              text: "Welcome to this specialized session. Please follow along as we explore the core concepts.",
+              isStatic: true
+            }];
           }
 
           return {
@@ -230,7 +273,8 @@ export default function App() {
             duration: result.mockData?.duration || 0,
             status: 'available',
             transcripts: aiTranscripts,
-            comments: []
+            comments: [],
+            excludedSegmentIds: []
           } as VideoData;
         } catch (err) {
           console.error('Failed to contact processing pipeline:', err);
@@ -435,10 +479,13 @@ export default function App() {
             {sortedVideos.map((video) => {
               const isCollapsed = video.status === 'available';
               return (
-                <button
+                <div
                   key={video.id}
                   onClick={() => setSelectedVideoId(video.id)}
-                  className={`w-full p-2 rounded flex gap-3 cursor-pointer transition-all border text-left group relative ${
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedVideoId(video.id); }}
+                  className={`w-full p-2 rounded flex gap-3 cursor-pointer transition-all border text-left group relative outline-none focus:ring-1 focus:ring-emerald-500/30 ${
                     selectedVideoId === video.id 
                     ? 'bg-slate-800 border-slate-700 shadow-lg' 
                     : 'border-transparent hover:bg-slate-800/40'
@@ -497,7 +544,7 @@ export default function App() {
                   {!isCollapsed && video.status === 'unavailable' && (
                     <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.5)]" />
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
@@ -707,6 +754,23 @@ export default function App() {
                    className="absolute inset-y-0 left-0 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-100"
                    style={{ width: `${selectedVideo && selectedVideo.duration > 0 ? (currentTime / selectedVideo.duration) * 100 : 0}%` }}
                  />
+                 
+                 {/* EDL Markers on Scrub Bar */}
+                 {selectedVideo && selectedVideo.duration > 0 && selectedVideo.transcripts.map(seg => {
+                   const isExcluded = selectedVideo.excludedSegmentIds.includes(seg.id);
+                   if (!isExcluded && !seg.isStatic) return null;
+                   return (
+                     <div 
+                       key={`marker-${seg.id}`}
+                       className={`absolute top-0 h-1 z-20 ${isExcluded ? 'bg-rose-500/50' : 'bg-amber-500/50'}`}
+                       style={{ 
+                         left: `${(seg.start / selectedVideo.duration) * 100}%`,
+                         width: `${(seg.duration / selectedVideo.duration) * 100}%`
+                       }}
+                     />
+                   );
+                 })}
+                 
                  <div 
                   className="absolute top-[-25px] flex flex-col items-center transition-all duration-100 cursor-grab"
                   style={{ left: `${selectedVideo && selectedVideo.duration > 0 ? (currentTime / selectedVideo.duration) * 100 : 0}%` }}
@@ -796,30 +860,58 @@ export default function App() {
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                   className="flex flex-col gap-4"
                 >
-                  {selectedVideo.transcripts.map((seg, i) => (
-                    <button 
-                      key={i}
-                      onClick={() => seekTo(seg.start)}
-                      className={`flex flex-col gap-1 transition-all text-left p-2 rounded-r border-l-2 ${
-                        currentTime >= seg.start && (selectedVideo.transcripts[i+1] ? currentTime < selectedVideo.transcripts[i+1].start : true)
-                        ? 'bg-slate-800/80 border-emerald-500' 
-                        : 'border-transparent opacity-60 hover:opacity-100'
-                      }`}
-                    >
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-[10px] font-mono text-emerald-500">00:{Math.floor(seg.start/60).toString().padStart(2, '0')}:{(seg.start%60).toString().padStart(2, '0')}</span>
-                        {currentTime >= seg.start && (selectedVideo.transcripts[i+1] ? currentTime < selectedVideo.transcripts[i+1].start : true) && (
-                          <span className="text-[8px] bg-emerald-500 text-slate-950 px-1 rounded font-bold tracking-tighter">ACTIVE</span>
-                        )}
+                  {selectedVideo.transcripts.map((seg, i) => {
+                    const isExcluded = selectedVideo.excludedSegmentIds.includes(seg.id);
+                    const isActive = currentTime >= seg.start && (selectedVideo.transcripts[i+1] ? currentTime < selectedVideo.transcripts[i+1].start : true);
+                    
+                    return (
+                      <div key={seg.id} className="relative group">
+                        <button 
+                          onClick={() => seekTo(seg.start)}
+                          className={`w-full flex flex-col gap-1 transition-all text-left p-2 rounded-r border-l-2 ${
+                            isActive
+                            ? 'bg-slate-800/80 border-emerald-500' 
+                            : isExcluded 
+                              ? 'opacity-20 grayscale border-transparent' 
+                              : 'border-transparent opacity-60 hover:opacity-100'
+                          }`}
+                        >
+                          <div className="flex justify-between items-baseline">
+                            <span className={`text-[10px] font-mono ${isExcluded ? 'text-slate-500 line-through' : 'text-emerald-500'}`}>
+                              00:{Math.floor(seg.start/60).toString().padStart(2, '0')}:{(seg.start%60).toString().padStart(2, '0')}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {seg.isStatic && (
+                                <span className="text-[7px] bg-slate-800 text-amber-500 border border-amber-500/30 px-1 rounded flex items-center gap-1">
+                                  <SkipForward className="w-2 h-2" /> STATIC
+                                </span>
+                              )}
+                              {isActive && (
+                                <span className="text-[8px] bg-emerald-500 text-slate-950 px-1 rounded font-bold tracking-tighter">ACTIVE</span>
+                              )}
+                            </div>
+                          </div>
+                          <p className={`text-[11px] leading-relaxed italic ${
+                            isActive ? 'text-white font-medium' : isExcluded ? 'text-slate-600' : 'text-slate-400'
+                          }`}>
+                            "{seg.text}"
+                          </p>
+                        </button>
+                        
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); toggleExcludeSegment(seg.id); }}
+                          className={`absolute top-2 right-2 p-1 rounded-full transition-all ${
+                            isExcluded 
+                            ? 'bg-emerald-500 text-slate-950 opacity-100' 
+                            : 'bg-slate-800 text-slate-500 opacity-0 group-hover:opacity-100 hover:text-white'
+                          }`}
+                          title={isExcluded ? "Include in export" : "Cut from project"}
+                        >
+                          <Scissors className="w-3 h-3" />
+                        </button>
                       </div>
-                      <p className={`text-[11px] leading-relaxed italic ${
-                        currentTime >= seg.start && (selectedVideo.transcripts[i+1] ? currentTime < selectedVideo.transcripts[i+1].start : true)
-                        ? 'text-white font-medium' : 'text-slate-400'
-                      }`}>
-                        "{seg.text}"
-                      </p>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </motion.div>
               ) : (
                 <motion.div 
