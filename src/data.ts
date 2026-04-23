@@ -1,22 +1,25 @@
 /**
+ * TRANSCRIPT_SEGMENT
  * Represents a single timed entry in the video transcript.
- * Used for playhead synchronization and search indexing.
+ * Used for playhead synchronization, search indexing, and EDL (Edit Decision List) management.
  */
 export interface TranscriptSegment {
-  /** Offset from video start in seconds */
+  /** Offset from video start in seconds (Float for sub-second precision) */
   start: number;
   /** Length of the segment in seconds */
   duration: number;
-  /** The captured text for this segment */
+  /** The captured text for this segment (Verbatim) */
   text: string;
   /** Flag indicating if the segment contains static imagery (e.g. title cards) */
   isStatic?: boolean;
-  /** Unique ID for segment targeting */
+  /** Unique ID for segment targeting and 'Cut' operations */
   id: string;
 }
 
 /**
+ * VIDEO_COMMENT
  * Represents a user comment extracted from the video platform.
+ * Integration pending: To be used for sentiment analysis grounding.
  */
 export interface VideoComment {
   /** Unique comment identifier */
@@ -30,6 +33,7 @@ export interface VideoComment {
 }
 
 /**
+ * VIDEO_STATUS
  * Availability states for the video processing pipeline.
  * - available: Stream is ready for playback and analysis.
  * - unavailable: Source data could not be reached (e.g. 404 or Geo-blocked).
@@ -38,24 +42,26 @@ export interface VideoComment {
 export type VideoStatus = 'available' | 'unavailable' | 'checking';
 
 /**
+ * VIDEO_DATA_MODEL
  * The primary data model for a Project in the VID (Video Insight Discovery) suite.
+ * Enforces strict typing for the verbatim analytical workflow.
  */
 export interface VideoData {
   /** Internal unique ID */
   id: string;
   /** Human-readable title */
   title: string;
-  /** Platform-specific ID (e.g. YouTube ID) */
+  /** Platform-specific ID (e.g. YouTube video ID) */
   videoId: string;
-  /** High-resolution image URL */
+  /** High-resolution image URL for the workspace tile */
   thumbnail: string;
   /** Total duration in seconds */
   duration: number;
   /** Operating status */
   status: VideoStatus;
-  /** Complete transcript timeline */
+  /** Complete transcript timeline (extracted via multi-stage pipeline) */
   transcripts: TranscriptSegment[];
-  /** IDs of segments to omit from playback/export (The EDL) */
+  /** IDs of segments to omit from playback/export (The EDL logic) */
   excludedSegmentIds: string[];
 }
 

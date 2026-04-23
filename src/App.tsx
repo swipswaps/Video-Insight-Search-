@@ -459,7 +459,7 @@ export default function App() {
       <header className="h-14 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/50 flex-shrink-0">
         <div className="flex items-center gap-6">
           <div className="bg-emerald-500 text-slate-950 font-black px-2 py-1 text-[10px] uppercase tracking-tighter rounded-sm">
-            VidReview v2.4
+            VidReview v2.9
           </div>
           <div className="h-8 w-[450px] bg-slate-950 border border-slate-700 rounded flex items-center px-3 gap-2 shadow-inner group focus-within:border-emerald-500/50 transition-colors">
             <Search className="w-3.5 h-3.5 text-slate-500 group-focus-within:text-emerald-400" />
